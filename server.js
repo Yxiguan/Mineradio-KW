@@ -70,7 +70,7 @@ const APP_VERSION = process.env.MINERADIO_VERSION || APP_PACKAGE.version || '0.9
 const UPDATE_CONFIG = readUpdateConfig(APP_PACKAGE);
 const PATCH_MAX_BYTES = 12 * 1024 * 1024;
 const PATCH_ALLOWED_ROOTS = new Set(['public', 'desktop', 'build']);
-const PATCH_ALLOWED_FILES = new Set(['server.js', 'dj-analyzer.js', 'package.json', 'package-lock.json']);
+const PATCH_ALLOWED_FILES = new Set(['server.js', 'kuwo_qmc.js', 'dj-analyzer.js', 'package.json', 'package-lock.json']);
 const UPDATE_FALLBACK_NOTES = [
   '电影镜头节奏更松',
   '音源失败自动换源',
@@ -3714,10 +3714,14 @@ const KW_URL_CACHE = new Map(); // key: rid|quality -> { url, level, br, exp }
 const KW_URL_TTL = 4 * 60 * 1000;
 let kwLastReq = 0;
 const KW_MIN_GAP = 300;
-async function kwFetchOnce(rid, candidate) {
+// 全酷我上游请求(取链/music.pay/至臻取链)共享 300ms 最短间隔, 防风控
+async function kwRateGate() {
   const gap = KW_MIN_GAP - (Date.now() - kwLastReq);
   if (gap > 0) await new Promise(r => setTimeout(r, gap));
   kwLastReq = Date.now();
+}
+async function kwFetchOnce(rid, candidate) {
+  await kwRateGate();
   const plain =
     kwCommonParams() +
     `&type=convert_url2&br=${candidate.br}&format=${candidate.format}&sig=0&rid=${rid}` +
@@ -3786,7 +3790,18 @@ function kwJfenc(plain) {
   for (let i = 0; i < b.length; i++) o[i] = b[i] ^ k[i % k.length];
   return o.toString('base64');
 }
-// music.pay 取某 rid 的分级 token + 权益位; 失败返回 null
+// 限速 + 3 次退避重试地 GET 一个酷我接口; 全失败抛错 (供上层区分"瞬时失败"与"确定无权益")
+async function kwGetWithRetry(u, headers) {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await kwRateGate();
+    try { return await requestText(u, { headers }); }
+    catch (e) { lastErr = e; if (attempt < 2) await new Promise(r => setTimeout(r, 400 * (attempt + 1))); }
+  }
+  throw lastErr || new Error('KW_HTTP_FAIL');
+}
+// music.pay 取某 rid 的分级 token + 权益位。
+//   成功(errorcode=0)→ {token,payInfo}; 无账号→null; 瞬时失败(网络/解析/errorcode!=0)→抛错(上层不做负缓存)。
 async function kwMusicPay(rid, quality) {
   if (!kwHasAccount()) return null;
   const dev = kwAccount.deviceId;
@@ -3799,32 +3814,32 @@ async function kwMusicPay(rid, quality) {
     '&op=query&action=play&signver=new&filter=no&apiversion=4&local=0&quality=' + encodeURIComponent(quality || 'ZPLY') +
     '&preload=1&ids=' + encodeURIComponent(rid) + '&jfencv=android_id,deviceid,oaid';
   const cookie = kwJfenc('user=' + dev + ',ct=11,cv=12121,chid=40,os_ver=36,newdevice=1');
-  let body;
-  try { body = await requestText(u, { headers: { 'User-Agent': KW_UA_PAY, encvCookies: cookie, Accept: '*/*' } }); }
-  catch (e) { return null; }
-  let j; try { j = JSON.parse(body); } catch (e) { return null; }
+  const body = await kwGetWithRetry(u, { 'User-Agent': KW_UA_PAY, encvCookies: cookie, Accept: '*/*' });
+  let j; try { j = JSON.parse(body); } catch (e) { throw new Error('music.pay 非 JSON'); }
   const song = (j && j.songs && j.songs[0]) || null;
-  if (!song || j.errorcode !== 0) return null;
+  if (!song || j.errorcode !== 0) throw new Error('music.pay errorcode=' + (j && j.errorcode));
   return { token: song.token || {}, payInfo: song.payInfo || {} };
 }
-// 至臻取链 (仅 ZPLY 20900kmflac); 拿不到/无权益返回 null (上层回落普通 flac)
+// 至臻取链 (仅 ZPLY 20900kmflac)。返回:
+//   对象 = 成功; 'no-zhizhen' = 会话有效但该曲/该号无至臻权益(确定, 可负缓存); null = 瞬时失败(勿负缓存)。
 async function kwFetchZhizhen(rid) {
-  const pay = await kwMusicPay(rid, 'ZPLY');
-  if (!pay) return null;
-  const zplyToken = pay.token.ZPLY;
-  if (!zplyToken) return null;               // 该账号对此曲无至臻权益
+  let pay;
+  try { pay = await kwMusicPay(rid, 'ZPLY'); }
+  catch (e) { return null; }                 // 瞬时失败(网络/会话) → 不负缓存, 下次再试
+  if (!pay) return 'no-zhizhen';             // 未登录 → 当作无至臻
+  if (!pay.token || !pay.token.ZPLY) return 'no-zhizhen';  // 会话有效但无 ZPLY 权益 → 确定
   const plain = kwCommonParams() +
     '&type=convert_url_with_sign&br=20900kmflac&format=mp3|aac&sig=0&rid=' + rid +
     '&priority=bitrate&network=WIFI&localUid=-1&mode=audition' +
-    '&token=' + zplyToken + '&bc_token=' + (pay.token.BCMS || '') +
+    '&token=' + pay.token.ZPLY + '&bc_token=' + (pay.token.BCMS || '') +
     '&timestamp=' + Math.floor(Date.now() / 1000) + '&uid=' + kwAccount.appuid +
     '&downloadPay=' + (pay.payInfo.ndown || '111111111111') +
     '&playPay=' + (pay.payInfo.nplay || '111111111111') +
     '&payUid=' + kwAccount.loginUid + '&isstar=false&surl=1&apiv=1';
   const url = 'http://nmobi.kuwo.cn/mobi.s?f=kuwo&q=' + kwMakeQ(plain);
   let body;
-  try { body = await requestText(url, { headers: { 'User-Agent': KW_UA_APK, Accept: '*/*' } }); }
-  catch (e) { return null; }
+  try { body = await kwGetWithRetry(url, { 'User-Agent': KW_UA_APK, Accept: '*/*' }); }
+  catch (e) { return null; }                 // 取链瞬时失败 → 不负缓存
   let j; try { j = JSON.parse(body); } catch (e) { return null; }
   const d = j && j.data;
   if (!d || !d.url || !d.ekey || String(d.format || '').toLowerCase() !== 'mflac') return null;
@@ -3848,11 +3863,12 @@ async function handleKwSongUrl(rid, qualityPreference) {
     } else {
       let zz = null;
       try { zz = await kwFetchZhizhen(songRid); } catch (e) { /* 回落普通取链 */ }
-      if (zz) {
+      if (zz && typeof zz === 'object') {
         KW_URL_CACHE.set(zzKey, { url: zz.url, ekey: zz.ekey, br: zz.br, exp: Date.now() + KW_URL_TTL });
         return { provider: 'kw', url: zz.url, ekey: zz.ekey, mflac: true, trial: false, playable: true, level: 'zhizhen', quality: 'zhizhen', br: zz.br, format: 'mflac', requestedQuality };
       }
-      KW_URL_CACHE.set(zzKey, { empty: true, exp: Date.now() + KW_URL_TTL });  // 负缓存
+      // 仅"确定无至臻权益"才负缓存; 瞬时失败(null)不缓存, 下次播放再试(否则一次网络抖动会锁死至臻 4 分钟)
+      if (zz === 'no-zhizhen') KW_URL_CACHE.set(zzKey, { empty: true, exp: Date.now() + KW_URL_TTL });
     }
   }
   const cacheKey = songRid + '|' + requestedQuality;

@@ -590,7 +590,7 @@ body.home-controls-locked #bottom-bar{opacity:0!important;pointer-events:none!im
 .quality-option:hover{transform:translateY(-1px);color:#fff;background:rgba(255,255,255,.09)}
 .quality-option.active{color:#eaf2ff;border-color:rgba(157,184,207,.46);background:rgba(157,184,207,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
 .quality-option.locked{opacity:.42;cursor:not-allowed;transform:none!important}
-.quality-option.locked small::after{content:' · 需网易云SVIP';color:rgba(244,210,138,.88)}
+.quality-option.locked small::after{content:' · 需网易云SVIP或登录酷我';color:rgba(244,210,138,.88)}
 #volume-slider{width:92px;accent-color:var(--fc-accent);cursor:pointer}
 #volume-value{width:34px;text-align:right;font-size:10px;color:rgba(255,255,255,.52);font-variant-numeric:tabular-nums}
 .mini-queue-popover{position:absolute;left:50%;bottom:calc(100% + 14px);width:min(420px,calc(100vw - 32px));max-height:min(420px,calc(100vh - 170px));padding:14px;border-radius:16px;border:1px solid rgba(255,255,255,.075);background:linear-gradient(145deg,rgba(18,18,23,.82),rgba(8,8,12,.88));backdrop-filter:blur(30px) saturate(1.08);-webkit-backdrop-filter:blur(30px) saturate(1.08);box-shadow:0 22px 70px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.065);opacity:0;pointer-events:none;transform:translateX(-50%) translateY(12px) scale(.98);transition:opacity .22s,transform .22s;z-index:7;overflow:hidden}
@@ -15185,8 +15185,10 @@ function playbackBitrateLabel(br) {
 }
 function playbackResolvedQualityText(data) {
   data = data || {};
+  var lv = String(data.level || data.quality || playbackQuality).toLowerCase();
   var label = playbackQualityLabel(data.level || data.quality || playbackQuality);
-  var br = playbackBitrateLabel(data.br);
+  // 至臻的 br(20900000) 是酷我档位码不是真实码率, 不显示以免误导(实际为无损 FLAC)
+  var br = lv === 'zhizhen' ? '' : playbackBitrateLabel(data.br);
   return br ? (label + ' · ' + br) : label;
 }
 function readPlaybackQualityPreference() {
