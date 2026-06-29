@@ -51,6 +51,7 @@ const path = require('path');
 const crypto = require('crypto');
 const tls = require('tls');
 const zlib = require('zlib');
+const kwQmc = require('./kuwo_qmc.js');   // 至臻 mflac (QMCv2) 解密
 const { once } = require('events');
 const { fileURLToPath } = require('url');
 const { analyzePodcastDjStream, analyzePodcastDjIntro } = require('./dj-analyzer');
@@ -1549,7 +1550,7 @@ const QQ_QUALITY_CANDIDATE_TEMPLATES = [
 ];
 function normalizeQualityPreference(value) {
   const raw = String(value || '').toLowerCase().trim();
-  if (['jymaster', 'master', 'studio', 'svip'].includes(raw)) return 'jymaster';
+  if (['jymaster', 'master', 'studio', 'svip', 'zhizhen', 'zply'].includes(raw)) return 'jymaster';
   if (['hires', 'hi-res', 'highres', 'zhenyin', 'spatial'].includes(raw)) return 'hires';
   if (['lossless', 'flac', 'sq'].includes(raw)) return 'lossless';
   if (['exhigh', 'high', '320', '320k', 'hq'].includes(raw)) return 'exhigh';
@@ -3770,10 +3771,90 @@ function classifyKwRestriction(throttled) {
   }
   return playbackRestriction('kw', 'url_unavailable', '酷我没有返回可播放地址, 可能受版权或地区限制', 'switch_source');
 }
+// —— 至臻音质 (ZPLY = 20900k mflac, TME 加密无损): music.pay 取分级 token -> convert_url_with_sign 取 .mflac+ekey ——
+//   逆向自 APK + 实测: ① music.pay 设备参数(android_id/deviceid/oaid)用固定 XOR key "kuwo_enc_key"+base64 加密,
+//   响应含按音质等级的 token 字典 + 权益位 payInfo.nplay; ② 取链带 token[ZPLY]/token[BCMS] + 权益位;
+//   ③ 回包给 .mflac 直链 + ekey(酷我 DES(ylzsxkwm) 包装的 QMC ekey), 经 /api/audio 用 kuwo_qmc 透明解密成 FLAC。
+const KW_ENC_KEY = 'kuwo_enc_key';
+const KW_OAID = crypto.randomBytes(16).toString('hex').toUpperCase() + crypto.randomBytes(16).toString('hex');
+const KW_SRC_PAY = 'kwplayer_ar_12.1.2.1_40.apk';
+const KW_UA_PAY = 'Dalvik/2.1.0 (Linux; U; Android 15; MTxiaocheng Build/MTXC)';
+function kwJfenc(plain) {
+  const k = Buffer.from(KW_ENC_KEY, 'utf8');
+  const b = Buffer.from(String(plain), 'utf8');
+  const o = Buffer.alloc(b.length);
+  for (let i = 0; i < b.length; i++) o[i] = b[i] ^ k[i % k.length];
+  return o.toString('base64');
+}
+// music.pay 取某 rid 的分级 token + 权益位; 失败返回 null
+async function kwMusicPay(rid, quality) {
+  if (!kwHasAccount()) return null;
+  const dev = kwAccount.deviceId;
+  const enc = kwJfenc(dev);
+  const u = 'http://musicpay.kuwo.cn/music.pay?newver=2&clienttimestamp=' + Date.now() +
+    '&uid=' + encodeURIComponent(kwAccount.loginUid) + '&sid=' + encodeURIComponent(kwAccount.loginSid) +
+    '&android_id=' + encodeURIComponent(enc) + '&from=ar&deviceid=' + encodeURIComponent(enc) +
+    '&ver=12.1.2.1&src=' + KW_SRC_PAY + '&appuid=' + kwAccount.appuid + '&allpay=0&notrace=0' +
+    '&oaid=' + encodeURIComponent(kwJfenc(KW_OAID)) +
+    '&op=query&action=play&signver=new&filter=no&apiversion=4&local=0&quality=' + encodeURIComponent(quality || 'ZPLY') +
+    '&preload=1&ids=' + encodeURIComponent(rid) + '&jfencv=android_id,deviceid,oaid';
+  const cookie = kwJfenc('user=' + dev + ',ct=11,cv=12121,chid=40,os_ver=36,newdevice=1');
+  let body;
+  try { body = await requestText(u, { headers: { 'User-Agent': KW_UA_PAY, encvCookies: cookie, Accept: '*/*' } }); }
+  catch (e) { return null; }
+  let j; try { j = JSON.parse(body); } catch (e) { return null; }
+  const song = (j && j.songs && j.songs[0]) || null;
+  if (!song || j.errorcode !== 0) return null;
+  return { token: song.token || {}, payInfo: song.payInfo || {} };
+}
+// 至臻取链 (仅 ZPLY 20900kmflac); 拿不到/无权益返回 null (上层回落普通 flac)
+async function kwFetchZhizhen(rid) {
+  const pay = await kwMusicPay(rid, 'ZPLY');
+  if (!pay) return null;
+  const zplyToken = pay.token.ZPLY;
+  if (!zplyToken) return null;               // 该账号对此曲无至臻权益
+  const plain = kwCommonParams() +
+    '&type=convert_url_with_sign&br=20900kmflac&format=mp3|aac&sig=0&rid=' + rid +
+    '&priority=bitrate&network=WIFI&localUid=-1&mode=audition' +
+    '&token=' + zplyToken + '&bc_token=' + (pay.token.BCMS || '') +
+    '&timestamp=' + Math.floor(Date.now() / 1000) + '&uid=' + kwAccount.appuid +
+    '&downloadPay=' + (pay.payInfo.ndown || '111111111111') +
+    '&playPay=' + (pay.payInfo.nplay || '111111111111') +
+    '&payUid=' + kwAccount.loginUid + '&isstar=false&surl=1&apiv=1';
+  const url = 'http://nmobi.kuwo.cn/mobi.s?f=kuwo&q=' + kwMakeQ(plain);
+  let body;
+  try { body = await requestText(url, { headers: { 'User-Agent': KW_UA_APK, Accept: '*/*' } }); }
+  catch (e) { return null; }
+  let j; try { j = JSON.parse(body); } catch (e) { return null; }
+  const d = j && j.data;
+  if (!d || !d.url || !d.ekey || String(d.format || '').toLowerCase() !== 'mflac') return null;
+  return { url: d.url, ekey: d.ekey, level: 'zhizhen', br: (Number(d.bitrate) || 20900) * 1000, format: 'mflac', bitrate: Number(d.bitrate) || 20900 };
+}
+
 async function handleKwSongUrl(rid, qualityPreference) {
   const songRid = String(rid || '').replace(/^MUSIC_/, '').trim();
   if (!songRid) return { provider: 'kw', url: '', playable: false, error: 'MISSING_RID', message: '缺少酷我歌曲 id' };
   const requestedQuality = normalizeQualityPreference(qualityPreference);
+  // 至臻 (jymaster 顶档 + 已登录): 先试 ZPLY 加密无损; 命中即透明解密播放, 拿不到则回落普通取链。
+  // 负缓存"该曲无至臻"避免每次播放都白打一次 music.pay (无权益的曲占多数)。
+  if (requestedQuality === 'jymaster' && kwHasAccount()) {
+    const zzKey = songRid + '|zhizhen';
+    const zc = KW_URL_CACHE.get(zzKey);
+    if (zc && zc.exp > Date.now()) {
+      if (!zc.empty) {
+        return { provider: 'kw', url: zc.url, ekey: zc.ekey, mflac: true, trial: false, playable: true, level: 'zhizhen', quality: 'zhizhen', br: zc.br, format: 'mflac', requestedQuality };
+      }
+      // zc.empty: 已知该曲无至臻, 跳过, 直接走下面普通取链
+    } else {
+      let zz = null;
+      try { zz = await kwFetchZhizhen(songRid); } catch (e) { /* 回落普通取链 */ }
+      if (zz) {
+        KW_URL_CACHE.set(zzKey, { url: zz.url, ekey: zz.ekey, br: zz.br, exp: Date.now() + KW_URL_TTL });
+        return { provider: 'kw', url: zz.url, ekey: zz.ekey, mflac: true, trial: false, playable: true, level: 'zhizhen', quality: 'zhizhen', br: zz.br, format: 'mflac', requestedQuality };
+      }
+      KW_URL_CACHE.set(zzKey, { empty: true, exp: Date.now() + KW_URL_TTL });  // 负缓存
+    }
+  }
   const cacheKey = songRid + '|' + requestedQuality;
   const cached = KW_URL_CACHE.get(cacheKey);
   if (cached && cached.exp > Date.now()) {
@@ -5143,17 +5224,42 @@ const server = http.createServer(async (req, res) => {
       if (!audioUrl) { res.writeHead(400); res.end('Missing url'); return; }
       const range = req.headers.range || '';
       const hdr = audioProxyHeadersFor(audioUrl, range);
+      // 至臻 mflac: 带 kwekey 则边下边解 (QMC 按绝对偏移寻址, Range 可拖动)。解密 1:1 不改长度, Content-Length/Range 原样透传。
+      const kwekey = url.searchParams.get('kwekey') || '';
+      let qmc = null;
+      if (kwekey) {
+        try { qmc = new kwQmc.QmcCipher(kwQmc.decryptEkeyB64(kwekey, (b, k) => kwDecrypt(b, k || 'ylzsxkwm'))); }
+        catch (e) { console.error('[Audio] kwekey 解析失败:', e.message); }
+      }
       const up = await fetch(audioUrl, { headers: hdr });
       const out = {
-        'Content-Type': audioContentTypeForUrl(audioUrl, up.headers.get('content-type')),
+        'Content-Type': qmc ? 'audio/flac' : audioContentTypeForUrl(audioUrl, up.headers.get('content-type')),
         'Access-Control-Allow-Origin': '*',
         'Accept-Ranges': 'bytes',
       };
       const cl = up.headers.get('content-length'); if (cl) out['Content-Length'] = cl;
       const cr = up.headers.get('content-range');  if (cr) out['Content-Range']  = cr;
       res.writeHead(up.status, out);
+      // 解密起始偏移 = 上游"实际发回"的起点: 仅 206 才有偏移 (上游若忽略 Range 回 200 整文件, 必须从 0 解,
+      // 否则按客户端请求的 Range 起点解会把整段解成噪声)。
+      let decOff = 0;
+      if (qmc && up.status === 206) {
+        const m = /bytes\s+(\d+)-/.exec(cr || '') || /bytes=(\d+)-/.exec(range);
+        decOff = m ? parseInt(m[1], 10) : 0;
+      }
       const reader = up.body.getReader();
-      while (true) { const c = await reader.read(); if (c.done) break; res.write(c.value); }
+      while (true) {
+        const c = await reader.read();
+        if (c.done) break;
+        if (qmc) {
+          const b = Buffer.from(c.value);
+          qmc.process(b, 0, b.length, decOff);
+          decOff += b.length;
+          res.write(b);
+        } else {
+          res.write(c.value);
+        }
+      }
       res.end();
     } catch (err) { console.error('[Audio]', err); res.writeHead(500); res.end(); }
     return;

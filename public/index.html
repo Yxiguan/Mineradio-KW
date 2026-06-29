@@ -2429,7 +2429,7 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
       <div id="quality-control" class="quality-control">
         <button id="quality-btn" class="ctrl-btn quality-pill" onclick="toggleQualityPanel(event)" title="音质"><span id="quality-btn-label">臻音</span></button>
         <div class="quality-popover" onclick="event.stopPropagation()">
-          <button class="quality-option svip-only" data-quality="jymaster" data-svip="1" onclick="setPlaybackQuality('jymaster')"><span>超清母带</span><small>SVIP / 最高规格</small></button>
+          <button class="quality-option svip-only" data-quality="jymaster" data-svip="1" onclick="setPlaybackQuality('jymaster')"><span>超清母带 / 至臻</span><small>网易云 SVIP · 酷我至臻</small></button>
           <button class="quality-option" data-quality="hires" onclick="setPlaybackQuality('hires')"><span>高清臻音</span><small>默认 / 细节优先</small></button>
           <button class="quality-option" data-quality="lossless" onclick="setPlaybackQuality('lossless')"><span>无损 SQ</span><small>FLAC 优先</small></button>
           <button class="quality-option" data-quality="exhigh" onclick="setPlaybackQuality('exhigh')"><span>极高 HQ</span><small>320kbps</small></button>
@@ -10344,7 +10344,7 @@ async function fetchBeatPrefetchAudioUrl(song) {
       ? await apiJson('/api/kw/song/url?rid=' + encodeURIComponent(song.rid || song.id || '') + qualityParam)
       : await apiJson('/api/song/url?id=' + encodeURIComponent(song.id) + qualityParam);
   if (!data || !data.url || data.trial) return null;
-  return '/api/audio?url=' + encodeURIComponent(data.url);
+  return '/api/audio?url=' + encodeURIComponent(data.url) + (data.ekey ? '&kwekey=' + encodeURIComponent(data.ekey) : '');
 }
 
 function scheduleQueueBeatPrefetch(fromIdx, delayMs, state) {
@@ -15132,9 +15132,13 @@ function escHtml(s){ var d = document.createElement('div'); d.textContent = s; r
 // 防止第三方封面字段(如经明文 HTTP + 宽松正则解析的酷我数据)含 " 闭合 src 属性注入 onerror 等 (XSS)。
 // 注意 escHtml 不转义双引号, 不能用于属性值场景。
 function attrUrl(u){ return String(u == null ? '' : u).replace(/["'<>`]/g, function(c){ return encodeURIComponent(c); }); }
+// 顶档音质可选条件: 网易云 SVIP 或 酷我登录(至臻权益由后端 music.pay 判定, 无权益自动回落无损)
+function canSelectTopQuality() {
+  return hasProviderSvip('netease', loginStatus) || hasPlatformLogin('kw');
+}
 function normalizePlaybackQuality(value) {
   value = String(value || '').toLowerCase();
-  if (value === 'jymaster' || value === 'master' || value === 'svip') return 'jymaster';
+  if (value === 'jymaster' || value === 'master' || value === 'svip' || value === 'zhizhen' || value === 'zply') return 'jymaster';
   if (value === 'hires' || value === 'hi-res' || value === 'highres' || value === 'highest') return 'hires';
   if (value === 'lossless' || value === 'flac' || value === 'sq') return 'lossless';
   if (value === 'exhigh' || value === 'high' || value === '320k' || value === 'hq') return 'exhigh';
@@ -15142,6 +15146,7 @@ function normalizePlaybackQuality(value) {
   return 'hires';
 }
 function playbackQualityLabel(value) {
+  if (String(value || '').toLowerCase() === 'zhizhen') return '至臻母带';  // 酷我至臻 (实际解出的 mflac 无损)
   value = normalizePlaybackQuality(value);
   if (value === 'jymaster') return '超清母带';
   if (value === 'hires') return '高清臻音';
@@ -15151,6 +15156,7 @@ function playbackQualityLabel(value) {
   return '高清臻音';
 }
 function playbackQualityShortLabel(value) {
+  if (String(value || '').toLowerCase() === 'zhizhen') return '至臻';
   value = normalizePlaybackQuality(value);
   if (value === 'jymaster') return '母带';
   if (value === 'hires') return '臻音';
@@ -15196,26 +15202,26 @@ function savePlaybackQualityPreference() {
 function updatePlaybackQualityUi() {
   var label = document.getElementById('quality-btn-label');
   var btn = document.getElementById('quality-btn');
-  var canUseSvip = hasProviderSvip('netease', loginStatus);
-  var displayQuality = playbackQuality === 'jymaster' && !canUseSvip ? 'hires' : playbackQuality;
+  var canTop = canSelectTopQuality();
+  var displayQuality = playbackQuality === 'jymaster' && !canTop ? 'hires' : playbackQuality;
   if (label) label.textContent = playbackQualityShortLabel(displayQuality);
-  if (btn) btn.title = playbackQuality === 'jymaster' && !canUseSvip
-    ? '音质: ' + playbackQualityLabel(displayQuality) + ' · 超清母带需网易云 SVIP'
+  if (btn) btn.title = playbackQuality === 'jymaster' && !canTop
+    ? '音质: ' + playbackQualityLabel(displayQuality) + ' · 顶档需网易云 SVIP 或酷我登录'
     : '音质: ' + playbackQualityLabel(displayQuality);
   document.querySelectorAll('.quality-option').forEach(function(option){
     var q = normalizePlaybackQuality(option.dataset.quality);
-    var locked = option.dataset.svip === '1' && !canUseSvip;
+    var locked = option.dataset.svip === '1' && !canTop;
     option.classList.toggle('active', q === displayQuality);
     option.classList.toggle('locked', locked);
     option.disabled = locked;
-    option.title = locked ? '需要网易云 SVIP 账号' : playbackQualityLabel(q);
+    option.title = locked ? '顶档音质: 需网易云 SVIP 或登录酷我' : playbackQualityLabel(q);
   });
 }
 function setPlaybackQuality(value) {
   var next = normalizePlaybackQuality(value);
-  if (next === 'jymaster' && !hasProviderSvip('netease', loginStatus)) {
-    showToast(hasPlatformLogin('netease') ? '超清母带需要网易云 SVIP' : '登录网易云 SVIP 后可用超清母带');
-    if (!hasPlatformLogin('netease')) openProviderLogin('netease');
+  if (next === 'jymaster' && !canSelectTopQuality()) {
+    showToast(hasPlatformLogin('netease') ? '超清母带需网易云 SVIP, 至臻母带需登录酷我' : '登录网易云 SVIP 可用超清母带, 登录酷我可用至臻母带');
+    if (!hasAnyPlatformLogin()) openProviderLogin('netease');
     return;
   }
   playbackQuality = next;
@@ -18605,7 +18611,7 @@ async function playQueueAt(idx, opts) {
     }
     bindPlaybackProgressEvents(audio);
     applyVolumeToAudio();
-    var proxyAudioUrl = '/api/audio?url=' + encodeURIComponent(data.url);
+    var proxyAudioUrl = '/api/audio?url=' + encodeURIComponent(data.url) + (data.ekey ? '&kwekey=' + encodeURIComponent(data.ekey) : '');
     audio.src = proxyAudioUrl;
     updatePlaybackProgressUi();
     audio.onended = function(){
