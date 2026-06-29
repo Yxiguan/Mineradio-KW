@@ -3972,34 +3972,54 @@ function kwParseLyricResponse(buf) {
   }
   return { kind: 'content', text };
 }
-// kuwo LRCX (逐字: [mm:ss.xxx]<charEndMs,charStartMs>字...) -> { lyric:行级LRC, yrc:逐字 }
+// kuwo LRCX 逐字 -> { lyric:行级LRC, yrc:逐字 }。逐字格式与解码逆向自 APK cn.kuwo.mod.lyrics.parser.f:
+//   头部 [kuwo:XXX] 给两个缩放因子 (XXX 按八进制解析, c=⌊v/10⌋, d=v%10; 缺省 c=d=1)。
+//   每字标签 <g1,g2> 或 <g1,g2,g3>(第三数忽略), 两数相对行首, 解码为:
+//     字起点 start = (g1 + g2) / (2c)   字时长 dur = (g1 - g2) / (2d)   (单位 ms)
+//   注: g1/g2 不是直接的 end/start —— 旧实现误读成 start=g2,dur=g1-g2, 漏掉 1/(2c)、1/(2d) 缩放,
+//   导致逐字时间整体前移且时长放大约 2d 倍 (歌词与播放严重对不上)。
 function kwLrcxToLyric(raw) {
+  const text = String(raw || '');
+  // [kuwo:XXX] 缩放头 (八进制): c=⌊v/10⌋, d=v%10; 解析失败或为 0 时回落 1 (避免除零)
+  let c = 1, d = 1;
+  const km = text.match(/\[kuwo:\s*([^\]\s]+)/);
+  if (km) {
+    const v = parseInt(km[1], 8);
+    if (Number.isFinite(v)) { const cc = Math.floor(v / 10), dd = v % 10; if (cc > 0) c = cc; if (dd > 0) d = dd; }
+  }
   const lrc = [], yrc = []; let anyWords = false;
-  for (const line of String(raw || '').split(/\r?\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     const tm = line.match(/^\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\](.*)$/);
-    if (!tm) continue; // 跳过 [ti:]/[ar:]/[offset:] 等头部标签
+    if (!tm) continue; // 跳过 [ti:]/[ar:]/[kuwo:]/[ver:] 等头部标签
     const stamp = `[${tm[1]}:${tm[2]}${tm[3] ? '.' + tm[3] : ''}]`;
     const lineStart = ((+tm[1]) * 60 + (+tm[2])) * 1000 + (tm[3] ? parseInt((tm[3] + '00').slice(0, 3), 10) : 0);
     const body = tm[4] || '';
-    const wre = /<(-?\d+),(-?\d+)>([^<]*)/g; let wm;
-    const words = []; let plain = '', lastEnd = 0;
+    const wre = /<(-?\d+),(-?\d+)(?:,-?\d+)?>([^<]*)/g; let wm;
+    const words = []; let plain = '', lineEnd = 0;
     while ((wm = wre.exec(body))) {
-      const end = +wm[1], start = +wm[2], ch = wm[3];
+      const g1 = +wm[1], g2 = +wm[2], ch = wm[3];
       if (!ch) continue;
-      // <charEndMs,charStartMs> 相对行首; 首字 start 常为负 → clamp 到 0 后再算时长, 保住字尾不溢出
-      const cs = Math.max(0, start);
-      words.push({ st: cs, du: Math.max(0, end - cs), ch });
-      plain += ch; lastEnd = Math.max(lastEnd, end);
+      let st = Math.round((g1 + g2) / (2 * c)); // 相对行首的字起点
+      let du = Math.round((g1 - g2) / (2 * d)); // 字时长
+      if (st < 0) st = 0;
+      if (du < 0) du = 0;
+      words.push({ st, du, ch });
+      plain += ch; lineEnd = Math.max(lineEnd, st + du);
     }
     if (!words.length) {
       // 无逐字标签的时间行 (偶见纯行级行) → 仍记进 lrc, 并以行级形式进 yrc, 避免混排时被前端 yrc 优先策略丢掉
-      const t = body.replace(/<-?\d+,-?\d+>/g, '').trim();
+      const t = body.replace(/<-?\d+,-?\d+(?:,-?\d+)?>/g, '').trim();
       if (t) { lrc.push(stamp + t); yrc.push(`[${lineStart},0]${t}`); }
       continue;
     }
+    // 单调收尾: 字尾不越过下一字字头 (与 APK 一致, 防逐字高亮重叠)
+    for (let i = 0; i < words.length - 1; i++) {
+      const gap = words[i + 1].st - words[i].st;
+      if (gap >= 0 && words[i].du > gap) words[i].du = gap;
+    }
     anyWords = true;
     lrc.push(stamp + plain);
-    let y = `[${lineStart},${Math.max(1, lastEnd)}]`;
+    let y = `[${lineStart},${Math.max(1, lineEnd)}]`;
     for (const w of words) y += `(${lineStart + w.st},${w.du},0)${w.ch}`;
     yrc.push(y);
   }
