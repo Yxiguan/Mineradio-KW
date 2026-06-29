@@ -19122,7 +19122,12 @@ async function fetchLyric(songOrId, token) {
       var qqId = song.qqId || (/^\d+$/.test(String(song.id || '')) ? song.id : '');
       endpoint = '/api/qq/lyric?mid=' + encodeURIComponent(mid) + '&id=' + encodeURIComponent(qqId);
     } else if (provider === 'kw') {
-      endpoint = '/api/kw/lyric?rid=' + encodeURIComponent(song.rid || song.id || '');
+      // 传 name/artist/duration: 播放 rid 无直挂歌词时, 后端按歌名歌手搜候选歌词 id
+      var kwDurSec = Math.round((Number(song.duration) || 0) / 1000);
+      endpoint = '/api/kw/lyric?rid=' + encodeURIComponent(song.rid || song.id || '') +
+        '&name=' + encodeURIComponent(song.name || '') +
+        '&artist=' + encodeURIComponent(song.artist || (song.artists ? song.artists.map(function(a){ return a.name; }).join('&') : '')) +
+        '&duration=' + kwDurSec;
     } else {
       var songId = song ? song.id : songOrId;
       endpoint = '/api/lyric?id=' + encodeURIComponent(songId);
@@ -19203,7 +19208,8 @@ function parseYrcText(text) {
     var lineDurMs = parseInt(m[2], 10) || 0;
     var body = m[3] || '';
     var words = [], fullText = '';
-    var reg = /\((\d+),(\d+),\d+\)([^()]*)/g, wm;
+    // 逐字文本取到"下一个时间标签前"为止 (而非遇到任意括号即停), 否则歌词里的字面括号如 "(Live)" 会被吞掉
+    var reg = /\((\d+),(\d+),\d+\)((?:(?!\(\d+,\d+,\d+\))[\s\S])*)/g, wm;
     while ((wm = reg.exec(body))) {
       var txt = (wm[3] || '').replace(/\s+/g, ' ');
       if (!txt) continue;

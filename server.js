@@ -50,6 +50,7 @@ const fs   = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const tls = require('tls');
+const zlib = require('zlib');
 const { once } = require('events');
 const { fileURLToPath } = require('url');
 const { analyzePodcastDjStream, analyzePodcastDjIntro } = require('./dj-analyzer');
@@ -3809,14 +3810,156 @@ async function handleKwSongUrl(rid, qualityPreference) {
   };
 }
 
-// —— 歌词: m.kuwo.cn 单曲歌词 (节点偶发 status=301, 需重试) ——
+// —— 歌词 ——
+// 主源: 官方歌词服务器 mlyric.kuwo.cn/mobi.s (逆向自 kwplayer APK):
+//   q = base64(DES(ylzsxkwm, kwCommonParams + type=lyric&...&lrcx=1&rid=)); 回包为
+//   "TP=content\r\nlrcx=N\r\n\r\n" + zlib(payload), lrcx=1 时 payload 还要 base64 + XOR("yeelion")。
+//   播放 rid 直取无词 (TP=none) 时, 再按 歌名+歌手 走 req=1 搜出候选 PATH (歌词专用 id) 重取。
+//   比旧的 H5 songinfoandlrc 稳得多 (H5 负载节点对很多 rid 恒返回 status=301 "音乐查询失败")。
+// 兜底: 仍保留 H5 songinfoandlrc (见 handleKwLyricH5)。
 function kwFmtLrcTime(sec) {
   const s = parseFloat(sec) || 0;
   const m = Math.floor(s / 60);
   const r = (s - m * 60).toFixed(2);
   return `[${String(m).padStart(2, '0')}:${r.padStart(5, '0')}]`;
 }
-async function handleKwLyric(rid) {
+const KW_LRC_BASE = 'http://mlyric.kuwo.cn/mobi.s?f=kuwo&q=';
+// requestText 会把响应当 utf8 字符串处理, 会破坏二进制 (zlib) 负载, 故歌词单独走 Buffer 版。
+function kwRequestBuffer(targetUrl, opts) {
+  opts = opts || {};
+  return new Promise((resolve, reject) => {
+    const u = new URL(targetUrl);
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request(u, { method: opts.method || 'GET', headers: opts.headers || {} }, response => {
+      const chunks = [];
+      response.on('data', c => chunks.push(c));
+      response.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        if (response.statusCode >= 400) { const e = new Error('HTTP ' + response.statusCode); e.statusCode = response.statusCode; reject(e); return; }
+        resolve(buf);
+      });
+    });
+    req.setTimeout(10000, () => req.destroy(new Error('Request timeout')));
+    req.on('error', reject);
+    req.end();
+  });
+}
+function kwXorYeelion(buf) {
+  const key = Buffer.from('yeelion', 'utf8');
+  const out = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) out[i] = buf[i] ^ key[i % key.length];
+  return out;
+}
+// 解出 TP=content 正文; 返回 { kind:'content'|'list'|'none', text|ids }
+function kwParseLyricResponse(buf) {
+  const sep = buf.indexOf('\r\n\r\n');
+  const head = (sep >= 0 ? buf.slice(0, sep) : buf).toString('utf8');
+  if (/^TP=none/.test(head)) return { kind: 'none' };
+  if (/^TP=list/.test(head)) {
+    const ids = [];
+    const txt = buf.toString('utf8');
+    const re = /PATH=(\d+)/g; let m;
+    while ((m = re.exec(txt))) ids.push(m[1]);
+    return { kind: 'list', ids };
+  }
+  if (!/^TP=content/.test(head) || sep < 0) return { kind: 'other' };
+  const isLrcx = /lrcx=1/.test(head);
+  const payload = buf.slice(sep + 4);
+  let inflated;
+  try { inflated = zlib.inflateSync(payload); }
+  catch (e) { try { inflated = zlib.gunzipSync(payload); } catch (e2) { return { kind: 'other' }; } }
+  let text = inflated.toString('utf8');
+  if (isLrcx) {
+    try { text = kwXorYeelion(Buffer.from(text.replace(/\s/g, ''), 'base64')).toString('utf8'); }
+    catch (e) { return { kind: 'other' }; }
+  }
+  return { kind: 'content', text };
+}
+// kuwo LRCX (逐字: [mm:ss.xxx]<charEndMs,charStartMs>字...) -> { lyric:行级LRC, yrc:逐字 }
+function kwLrcxToLyric(raw) {
+  const lrc = [], yrc = []; let anyWords = false;
+  for (const line of String(raw || '').split(/\r?\n/)) {
+    const tm = line.match(/^\[(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?\](.*)$/);
+    if (!tm) continue; // 跳过 [ti:]/[ar:]/[offset:] 等头部标签
+    const stamp = `[${tm[1]}:${tm[2]}${tm[3] ? '.' + tm[3] : ''}]`;
+    const lineStart = ((+tm[1]) * 60 + (+tm[2])) * 1000 + (tm[3] ? parseInt((tm[3] + '00').slice(0, 3), 10) : 0);
+    const body = tm[4] || '';
+    const wre = /<(-?\d+),(-?\d+)>([^<]*)/g; let wm;
+    const words = []; let plain = '', lastEnd = 0;
+    while ((wm = wre.exec(body))) {
+      const end = +wm[1], start = +wm[2], ch = wm[3];
+      if (!ch) continue;
+      // <charEndMs,charStartMs> 相对行首; 首字 start 常为负 → clamp 到 0 后再算时长, 保住字尾不溢出
+      const cs = Math.max(0, start);
+      words.push({ st: cs, du: Math.max(0, end - cs), ch });
+      plain += ch; lastEnd = Math.max(lastEnd, end);
+    }
+    if (!words.length) {
+      // 无逐字标签的时间行 (偶见纯行级行) → 仍记进 lrc, 并以行级形式进 yrc, 避免混排时被前端 yrc 优先策略丢掉
+      const t = body.replace(/<-?\d+,-?\d+>/g, '').trim();
+      if (t) { lrc.push(stamp + t); yrc.push(`[${lineStart},0]${t}`); }
+      continue;
+    }
+    anyWords = true;
+    lrc.push(stamp + plain);
+    let y = `[${lineStart},${Math.max(1, lastEnd)}]`;
+    for (const w of words) y += `(${lineStart + w.st},${w.du},0)${w.ch}`;
+    yrc.push(y);
+  }
+  // 整首都无逐字 (lrcx=0 纯 LRC) → 不发 yrc, 让前端走完整的行级 lyric
+  return { lyric: lrc.join('\n'), yrc: anyWords ? yrc.join('\n') : '' };
+}
+async function kwLyricCall(plain) {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await kwRequestBuffer(KW_LRC_BASE + encodeURIComponent(kwMakeQ(plain)), { headers: { 'User-Agent': KW_UA_APK } }); }
+    catch (e) { lastErr = e; if (attempt < 2) await new Promise(r => setTimeout(r, 300 * (attempt + 1))); }
+  }
+  throw lastErr || new Error('KW_LYRIC_HTTP_FAIL');
+}
+async function handleKwLyric(rid, name, artist, duration) {
+  const songRid = String(rid || '').replace(/^MUSIC_/, '').trim();
+  if (!songRid && !name) return { provider: 'kw', error: 'MISSING_RID', lyric: '' };
+  const base = kwCommonParams();
+  const dur = Math.max(0, Math.round(Number(duration) || 0));
+  // 单次取词: 失败/非歌词响应都吞掉返回 null, 任一阶段出错都不阻断后续阶段
+  const tryLyric = async (plain, id) => {
+    try {
+      const r = kwParseLyricResponse(await kwLyricCall(plain));
+      if (r.kind !== 'content') return null;
+      const out = kwLrcxToLyric(r.text);
+      return out.lyric ? out : null;
+    } catch (e) { console.warn('[KwLyric] mlyric 取词失败:', e.message); return null; }
+  };
+  // 1) 用播放 rid 直取
+  if (/^\d+$/.test(songRid)) {
+    const out = await tryLyric(`${base}&type=lyric&req=2&lrcx=1&rid=${songRid}&encode=utf8`);
+    if (out) return { provider: 'kw', id: songRid, lyric: out.lyric, tlyric: '', yrc: out.yrc, source: 'kw-mobi-rid' };
+  }
+  // 2) rid 无词 → 按 歌名+歌手 搜候选 PATH 重取 (逐个候选独立容错)
+  if (name) {
+    let list = { kind: 'none' };
+    try {
+      const q = `${base}&type=lyric&songname=${encodeURIComponent(name)}&artist=${encodeURIComponent(artist || '')}` +
+        `&filename=&duration=${dur}&req=1&lrcx=1&encode=utf8`;
+      list = kwParseLyricResponse(await kwLyricCall(q));
+    } catch (e) { console.warn('[KwLyric] mlyric 搜词失败:', e.message); }
+    if (list.kind === 'list') {
+      for (const pid of list.ids.slice(0, 3)) {
+        const out = await tryLyric(`${base}&type=lyric&req=2&lrcx=1&rid=${pid}&encode=utf8`);
+        if (out) return { provider: 'kw', id: songRid, lyric: out.lyric, tlyric: '', yrc: out.yrc, source: 'kw-mobi-search', lyricId: pid };
+      }
+    }
+  }
+  // 3) 兜底: 旧的 H5 songinfoandlrc
+  if (/^\d+$/.test(songRid)) {
+    const h5 = await handleKwLyricH5(songRid);
+    if (h5 && h5.lyric) return h5;
+  }
+  return { provider: 'kw', id: songRid, lyric: '', tlyric: '', yrc: '', source: 'kw-empty' };
+}
+// 兜底歌词源: m.kuwo.cn H5 单曲歌词 (节点偶发 status=301, 需重试; 仅行级)
+async function handleKwLyricH5(rid) {
   const songRid = String(rid || '').replace(/^MUSIC_/, '').trim();
   if (!songRid) return { provider: 'kw', error: 'MISSING_RID', lyric: '' };
   const url = `https://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=${songRid}&httpsStatus=1`;
@@ -3834,6 +3977,7 @@ async function handleKwLyric(rid) {
       }
       lastErr = new Error('酷我歌词接口 status=' + (data && data.status));
     } catch (e) { lastErr = e; }
+    if (attempt < 4) await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
   }
   return { provider: 'kw', id: songRid, lyric: '', tlyric: '', yrc: '', source: 'kw-empty', error: lastErr && lastErr.message };
 }
@@ -4299,8 +4443,11 @@ const server = http.createServer(async (req, res) => {
   if (pn === '/api/kw/lyric') {
     try {
       const rid = url.searchParams.get('rid') || url.searchParams.get('id') || '';
-      if (!rid) { sendJSON(res, { provider: 'kw', error: 'Missing kw rid', lyric: '' }, 400); return; }
-      const data = await handleKwLyric(rid);
+      const name = url.searchParams.get('name') || '';
+      const artist = url.searchParams.get('artist') || '';
+      const duration = url.searchParams.get('duration') || '';
+      if (!rid && !name) { sendJSON(res, { provider: 'kw', error: 'Missing kw rid', lyric: '' }, 400); return; }
+      const data = await handleKwLyric(rid, name, artist, duration);
       sendJSON(res, data);
     } catch (err) {
       console.error('[KwLyric]', err);
