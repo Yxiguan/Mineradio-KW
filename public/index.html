@@ -1340,6 +1340,8 @@ body.desktop-shell.diy-mode #bottom-bar.stage-mode{left:50%;width:min(1080px,cal
 .pl-detail-row-title{font-size:11.5px;font-weight:650;color:rgba(255,255,255,.86);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pl-detail-row-artist{display:inline-flex;max-width:100%;border:0;background:transparent;color:rgba(var(--fc-accent-rgb),.68);font:500 10.5px var(--font-sans);padding:0;margin-top:2px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pl-detail-row-artist:hover{color:#fff;text-decoration:underline;text-underline-offset:3px}
+.pl-detail-row.is-offline{opacity:.5}
+.pl-detail-offline-tag{display:inline-block;margin-left:6px;padding:0 5px;border-radius:5px;font-size:9px;font-weight:600;line-height:15px;color:rgba(255,255,255,.55);background:rgba(255,255,255,.08);vertical-align:middle}
 .pl-card.expanded{border-color:rgba(var(--fc-accent-rgb),.32);background:rgba(var(--fc-accent-rgb),.060)}
 .pl-card.podcast-card{border-color:rgba(0,245,212,.075);background:rgba(0,245,212,.030)}
 .pl-card.podcast-card:hover{border-color:rgba(0,245,212,.20);background:rgba(0,245,212,.070)}
@@ -19599,9 +19601,10 @@ function playlistPanelDetailHtml(pl, provider) {
     : visibleTracks.map(function(song, i){
         var thumb = songCoverSrc(song, 60);
         var imgTag = thumb ? '<img src="' + attrUrl(thumb) + '" alt="" loading="lazy" decoding="async" onerror="this.style.opacity=0.2">' : '<div style="width:34px;height:34px;border-radius:7px;background:rgba(255,255,255,.06);flex:0 0 auto"></div>';
-        return '<div class="pl-detail-row" data-pl-detail-row="' + i + '">' +
+        var offTag = song.offline ? '<span class="pl-detail-offline-tag">已下架</span>' : '';
+        return '<div class="pl-detail-row' + (song.offline ? ' is-offline' : '') + '" data-pl-detail-row="' + i + '">' +
           imgTag +
-          '<div style="flex:1;min-width:0"><div class="pl-detail-row-title">' + escHtml(song.name || '') + '</div>' +
+          '<div style="flex:1;min-width:0"><div class="pl-detail-row-title">' + escHtml(song.name || '') + offTag + '</div>' +
           '<button type="button" class="pl-detail-row-artist" data-pl-detail-artist="' + i + '">' + escHtml(song.artist || '未知歌手') + '</button></div>' +
         '</div>';
       }).join('');

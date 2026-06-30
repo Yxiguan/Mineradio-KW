@@ -4160,6 +4160,8 @@ function kwMapPlaylistTrack(m) {
   const artists = artist
     ? artist.split(/\s*&\s*|\s*、\s*|\s*\/\s*|\s*,\s*/).map(n => ({ name: n.trim() })).filter(a => a.name)
     : [];
+  // online=0 为下架/无版权曲 (pl3_getlist 才会带出来; getlistinfo 直接过滤掉)。保留并打标, 让列表与官方 App 一致。
+  const offline = m.online != null && String(m.online) === '0';
   return {
     provider: 'kw',
     source: 'kw',
@@ -4177,23 +4179,62 @@ function kwMapPlaylistTrack(m) {
     fee: 0,
     formats: m.formats || '',
     hasFlac: /FLAC|ALFLAC/i.test(m.formats || ''),
+    offline,
     playable: false,
   };
+}
+// 全量歌单: pl.svc op=pl3_getlist&sig=0 (逆向自 kwplayer APK + Frida 实测)。
+//   getlistinfo 会过滤掉 online=0 的下架/无版权曲, 导致歌单少几首 (与官方 App 显示不符);
+//   pl3_getlist 用 sig=0 强制全量同步, 返回歌单完整成员 (含 online=0 下架歌)。
+//   实测仅校验登录态 uid/sid; 设备参数 (devid/user/imei/oaid) 任意值即可, 复用 kwJfenc 即可。
+//   返回 data.info = { id, ctime, musiclist:[...], ... }; 未登录/失败返回 null 由上层回退 getlistinfo。
+async function kwGetPlaylistFull(pid) {
+  if (!kwHasAccount()) return null;
+  const dev = kwAccount.deviceId;
+  const params = new URLSearchParams({
+    op: 'pl3_getlist', pid: String(pid), sig: '0',
+    uid: kwAccount.loginUid, sid: kwAccount.loginSid,
+    encode: 'utf-8', plat: 'ar',
+    devid: kwJfenc(kwAccount.appuid), user: kwJfenc(dev), imei: kwJfenc(dev), oaid: kwJfenc(KW_OAID),
+    prod: KW_PROD, source: KW_SRC_PAY, corp: 'kuwo',
+    locationid: '1', approval: 'false', allpay: '0', notrace: '0',
+    ttime: String(Date.now()), pn: '0', jfencv: 'devid,user,imei,oaid',
+  });
+  try {
+    const data = await kwGetJSON(`${KW_PL_BASE}?${params.toString()}`);
+    if (data && data.errcode === 0 && data.info && Array.isArray(data.info.musiclist)) return data.info;
+  } catch (e) { console.warn('[Kuwo] pl3_getlist 失败, 回退 getlistinfo:', e.message); }
+  return null;
 }
 async function handleKwPlaylistTracks(pid, limit) {
   const id = String(pid || '').trim();
   if (!id) return { provider: 'kw', error: 'MISSING_PID', tracks: [] };
-  const rn = Math.max(1, Math.min(1000, Number(limit) || 300));
-  const url = `${KW_PL_BASE}?op=getlistinfo&pid=${encodeURIComponent(id)}&pn=0&rn=${rn}&encode=utf-8&keyset=pl2012&vipver=1&newver=1`;
-  const data = await kwGetJSON(url);
-  const list = (data && Array.isArray(data.musiclist)) ? data.musiclist : [];
+  // 优先 pl3_getlist 全量 (登录态): 含下架歌, 与官方 App 一致
+  let list = [];
+  let title = '';
+  let cover = '';
+  let total = 0;
+  const full = await kwGetPlaylistFull(id);
+  if (full && full.musiclist.length) {
+    list = full.musiclist;
+    total = list.length;
+  } else {
+    // 回退: 游客或 pl3 失败时用 getlistinfo (会过滤下架歌, 但游客只能如此)
+    const rn = Math.max(1, Math.min(1000, Number(limit) || 300));
+    const url = `${KW_PL_BASE}?op=getlistinfo&pid=${encodeURIComponent(id)}&pn=0&rn=${rn}&encode=utf-8&keyset=pl2012&vipver=1&newver=1`;
+    const data = await kwGetJSON(url);
+    list = (data && Array.isArray(data.musiclist)) ? data.musiclist : [];
+    title = kwDecodeText(data && data.title) || '';
+    cover = (data && data.pic) || '';
+    total = Number(data && data.total) || list.length;
+  }
   const tracks = list.map(kwMapPlaylistTrack).filter(Boolean);
   const playlist = {
     provider: 'kw',
     id,
-    name: kwDecodeText(data && data.title) || '酷我歌单',
-    cover: (data && data.pic) || (tracks[0] && tracks[0].cover) || '',
-    trackCount: Number(data && data.total) || tracks.length,
+    name: title || '酷我歌单',
+    cover: cover || (tracks[0] && tracks[0].cover) || '',
+    trackCount: total || tracks.length,
   };
   return { provider: 'kw', playlist, tracks };
 }
