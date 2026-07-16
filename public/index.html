@@ -1961,10 +1961,10 @@ html.control-glass-svg-ok #visual-guide-btn:hover{
         <div class="home-card-sub" id="home-daily-sub">登录后同步你的今日歌曲</div>
         <div class="home-card-art" id="home-daily-art"></div>
       </button>
-      <button class="home-card" data-home-tone="playlist" type="button" onclick="playHomeSong(1)">
-        <div class="home-card-label">Song</div>
+      <button class="home-card" data-home-tone="playlist" type="button" onclick="playHomePrivateRadio()">
+        <div class="home-card-label">Radio</div>
         <div class="home-card-title" id="home-private-title">私人电台</div>
-        <div class="home-card-sub" id="home-private-sub">从你的推荐和歌单里开播</div>
+        <div class="home-card-sub" id="home-private-sub">酷我私人 FM · 猜你喜欢</div>
         <div class="home-card-art" id="home-private-art"></div>
       </button>
       <button class="home-card" data-home-tone="mix" type="button" onclick="playHomeRecent()">
@@ -15450,11 +15450,27 @@ function updateListenStatsTick(force) {
   if (!listenSession || listenSession.key !== key) beginListenSession(song, activeRadioContext);
   accumulateListenTime(force);
 }
+// 私人电台 type=6 口味上报: 播放/切歌时把上一首的收听时长回传酷我 FM (skip 也是重要负反馈), fire-and-forget。
+function maybeReportKwRadio(session) {
+  try {
+    var ctx = session && session.context;
+    if (!ctx || ctx.type !== 'kw-radio') return;
+    var snap = session.song || {};
+    var rid = snap.id || '';
+    if (!rid) return;
+    var playtime = Math.max(0, Math.round(session.listenMs || 0));
+    var duration = Math.max(0, Math.round(snap.duration || 0));
+    apiJson('/api/kw/radio/report?fid=' + encodeURIComponent(ctx.fid || '-26711') +
+      '&rid=' + encodeURIComponent(rid) + '&playtime=' + playtime + '&duration=' + duration + '&t=' + Date.now())
+      .catch(function(){});
+  } catch (e) {}
+}
 function finalizeListenSession(completed) {
   if (!listenSession) return;
   accumulateListenTime(true);
   var session = listenSession;
   listenSession = null;
+  maybeReportKwRadio(session);   // 私人电台: 无论听多久都上报口味 (含 skip)
   var effective = completed || session.listenMs >= 45000 || session.maxProgress >= 0.5 || (!audio || !audio.duration ? session.listenMs >= 30000 : false);
   if (!effective) return;
   var now = Date.now();
@@ -15669,8 +15685,8 @@ function renderHomeDiscover() {
   if (loggedOutHome) {
     if (dailyTitle) dailyTitle.textContent = '每日推荐';
     if (dailySub) dailySub.textContent = '登录后同步你的今日歌曲';
-    if (privateTitle) privateTitle.textContent = '推荐歌曲';
-    if (privateSub) privateSub.textContent = '登录后同步更多歌曲';
+    if (privateTitle) privateTitle.textContent = '私人电台';
+    if (privateSub) privateSub.textContent = '酷我私人 FM · 猜你喜欢';
     if (libTitle) libTitle.textContent = '更多歌曲';
     if (libSub) libSub.textContent = '播放后会继续补全推荐';
     setHomeArt('home-weather-art', '', 280);
@@ -15682,8 +15698,8 @@ function renderHomeDiscover() {
   } else {
     if (dailyTitle) dailyTitle.textContent = daily ? daily.name : '每日推荐';
     if (dailySub) dailySub.textContent = daily ? ((daily.artist || songSourceLabel(daily) || '今日歌曲') + ' · 点击播放今日队列') : '同步你的今日歌曲';
-    if (privateTitle) privateTitle.textContent = cardSongB ? cardSongB.name : '私人雷达';
-    if (privateSub) privateSub.textContent = cardSongB ? (cardSongB.artist || songSourceLabel(cardSongB) || '推荐歌曲') : (homeDiscoverState.songs.length + ' 首 · 根据今日推荐与常听偏好');
+    if (privateTitle) privateTitle.textContent = '私人电台';
+    if (privateSub) privateSub.textContent = '酷我私人 FM · 猜你喜欢';
     if (libTitle) libTitle.textContent = cardSongC ? cardSongC.name : (summary.topArtist ? summary.topArtist.name : '更多歌曲');
     if (libSub) libSub.textContent = cardSongC ? (cardSongC.artist || songSourceLabel(cardSongC) || '推荐歌曲') : (summary.topArtist ? ('歌手偏好 · ' + summary.topArtist.plays + ' 次') : '播放几首后生成你的偏好');
     setHomeArt('home-weather-art', (userPlaylists[0] && userPlaylists[0].cover) || (playlistItem && playlistItem.cover) || daily && daily.cover, 280);
@@ -16108,33 +16124,88 @@ async function playHomeDaily() {
   forcePlaybackControlsInteractive();
   playQueueAt(0).catch(function(e){ console.warn('[HomeDailyPlay]', e); });
 }
+var kwRadioStartBusy = false;
+var kwRadioExtendBusy = false;
+// 私人电台(酷我猜你喜欢/私人 FM)上下文: 挂在每首歌的 radioContext 上, 供无限续播与口味上报共享同一 offset 游标。
+function kwRadioContext(radio) {
+  radio = radio || {};
+  return {
+    type: 'kw-radio',
+    provider: 'kw',
+    fid: String(radio.fid || '-26711'),
+    title: radio.title || '私人电台',
+    offset: Number(radio.offset) || 0,
+    hasMore: radio.hasMore !== false,
+    dry: 0,
+  };
+}
+// 无限续播: 播到临近队尾(剩 <=3 首)时, 用 offset 拉下一批酷我私人 FM 去重后追加进队列。
+function maybeExtendKwRadio(idx) {
+  var ctx = activeRadioContext;
+  if (!ctx || ctx.type !== 'kw-radio' || ctx.hasMore === false) return;
+  if (kwRadioExtendBusy) return;
+  if (idx < playQueue.length - 3) return;
+  kwRadioExtendBusy = true;
+  apiJson('/api/kw/radio?fid=' + encodeURIComponent(ctx.fid) + '&size=10&offset=' + encodeURIComponent(ctx.offset) + '&t=' + Date.now())
+    .then(function(data){
+      var tracks = (data && data.tracks) || [];
+      var seen = {};
+      playQueue.forEach(function(s){ seen[String(s.rid || s.id)] = true; });
+      var fresh = tracks.filter(function(s){ return s && !seen[String(s.rid || s.id)]; }).map(function(song){
+        var c = cloneSong(song); c.radioContext = ctx; return c;
+      });
+      if (fresh.length) {
+        playQueue = playQueue.concat(fresh);
+        ctx.dry = 0;
+        safeRenderQueuePanel('kw-radio-extend');
+        safeShelfRebuild('kw-radio-extend');
+      } else {
+        ctx.dry = (ctx.dry || 0) + 1;
+      }
+      if (data && typeof data.offset !== 'undefined') ctx.offset = data.offset;
+      // 连续 3 次拉不到新歌就停, 避免 FM 回环时空转
+      ctx.hasMore = !!(data && data.hasMore) && tracks.length > 0 && (ctx.dry || 0) < 3;
+    })
+    .catch(function(e){ console.warn('[KwRadioExtend]', e); })
+    .finally(function(){ kwRadioExtendBusy = false; });
+}
+// 私人电台: 直接开播酷我"猜你喜欢"私人 FM (fid=-26711)。游客可用, 登录后按账号个性化。
 async function playHomePrivateRadio() {
+  if (kwRadioStartBusy) return;
+  kwRadioStartBusy = true;
   homeForcedOpen = false;
   homeSuppressed = false;
   setHomeControlsLocked(false);
-  if (!hasAnyPlatformLogin() && !homeDiscoverState.loggedIn) {
-    showLoginModal({ source: 'home-private' });
-    return;
-  }
-  await waitForHomeDiscoverIdle();
-  if (!homeDiscoverState.loaded || ((!homeDiscoverState.playlists.length && !homeDiscoverState.songs.length) && !homeDiscoverState.loading)) {
-    await loadHomeDiscover(true);
-  }
-  if (homeDiscoverState.songs.length) {
-    playQueue = homeDiscoverState.songs.map(cloneSong);
+  try {
+    showToast('正在生成私人电台');
+    var data = await apiJson('/api/kw/radio?fid=-26711&size=15&offset=0&t=' + Date.now());
+    var tracks = (data && data.tracks) || [];
+    if (!tracks.length) {
+      showToast('私人电台暂时没有推荐，先试试搜索');
+      runHomeSearch('华语流行榜');
+      return;
+    }
+    var ctx = kwRadioContext({
+      fid: (data.radio && data.radio.fid) || '-26711',
+      title: (data.radio && data.radio.title) || '私人电台',
+      offset: data.offset,
+      hasMore: data.hasMore,
+    });
+    activeRadioContext = ctx;
+    playQueue = tracks.map(function(song){ var c = cloneSong(song); c.radioContext = ctx; return c; });
     currentIdx = 0;
     safeRenderQueuePanel('home-private-radio');
     safeShelfRebuild('home-private-radio', true);
     forcePlaybackControlsInteractive();
-    playQueueAt(0).catch(function(e){ console.warn('[HomePrivatePlay]', e); });
-    return;
+    await playQueueAt(0, { context: ctx });
+    forcePlaybackControlsInteractive();
+    showToast((ctx.title || '私人电台') + ' · 猜你喜欢已开播');
+  } catch (e) {
+    console.warn('[HomePrivateRadio]', e);
+    showToast('私人电台启动失败，请稍后再试');
+  } finally {
+    kwRadioStartBusy = false;
   }
-  var item = homeDiscoverState.playlists[0];
-  if (item && item.id) {
-    await loadPlaylistIntoQueueById(item.id, true, item.name || '私人雷达');
-    return;
-  }
-  openHomeLibrary();
 }
 function playHomeSong(index) {
   homeForcedOpen = false;
@@ -18516,6 +18587,7 @@ async function playQueueAt(idx, opts) {
   playQueue[idx] = song;
   var playbackContext = opts.context || (song && song.radioContext) || null;
   activeRadioContext = playbackContext || null;
+  maybeExtendKwRadio(idx);   // 私人电台临近队尾时预拉下一批
   safeRenderQueuePanel('play-queue-at-switch', { scrollCurrent: miniQueueOpen });
   safePlaybackStep('shelf-preview-suppress', suppressShelfPreviewForPlaybackSwitch);
   pauseCurrentAudioForTrackSwitch();

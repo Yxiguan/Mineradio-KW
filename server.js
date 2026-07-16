@@ -4239,6 +4239,130 @@ async function handleKwPlaylistTracks(pid, limit) {
   return { provider: 'kw', playlist, tracks };
 }
 
+// —— 私人电台 / 猜你喜欢: gxh2.kuwo.cn/newradio.nr (逆向自 kwplayer APK 抓包) ——
+//   type=4 拉推荐歌: 每批固定 5 首, 靠 offset 翻页 (请求 offset=N → 返回 offset=N+5, 逐批递增);
+//     响应是明文 JSON (无需解密); 游客 login=0 也返回推荐 (热门), 登录后按 loginUid 个性化。
+//   type=6 上报口味 (mtaste) + 播放时长, 供 FM 学习; best-effort, 失败静默。
+//   歌曲对象不带封面字段, 只有 albumid/artistid, 用 handleKwPic 按 rid 并行补全。
+const KW_RADIO_BASE = 'http://gxh2.kuwo.cn/newradio.nr';
+const KW_RADIO_CHANNELS = [
+  { fid: '-26711', title: '私人FM' },
+  { fid: '-58595', title: '开车时刻' },
+  { fid: '-33924', title: '轻音助眠' },
+  { fid: '-20484', title: '工作必备' },
+  { fid: '-28622', title: '学习自习' },
+  { fid: '-18249', title: '儿童热门' },
+  { fid: '-58537', title: '相声曲艺' },
+];
+function kwRadioTitle(fid) {
+  const c = KW_RADIO_CHANNELS.find(x => x.fid === String(fid));
+  return (c && c.title) || '私人电台';
+}
+function kwMapRadioTrack(m) {
+  m = m || {};
+  const rid = String(m.id || m.rid || m.musicrid || '').replace(/^MUSIC_/, '').trim();
+  if (!rid || !/^\d+$/.test(rid)) return null;
+  const name = kwDecodeText(m.songname || m.name || '');
+  if (!name) return null;
+  const artist = kwDecodeText(m.artist || '');
+  const album = kwDecodeText(m.album || '');
+  const formats = m.mediacode || m.formats || '';
+  const artists = artist
+    ? artist.split(/\s*&\s*|\s*、\s*|\s*\/\s*|\s*,\s*/).map(n => ({ name: n.trim() })).filter(a => a.name)
+    : [];
+  return {
+    provider: 'kw',
+    source: 'kw',
+    type: 'kw',
+    id: rid,
+    rid,
+    name,
+    artist: artist || (artists.map(a => a.name).join(' / ')),
+    artists: artists.length ? artists : (artist ? [{ name: artist }] : []),
+    artistId: m.artistid || '',
+    album,
+    albumId: m.albumid || '',
+    cover: '',
+    duration: (Number(m.duration) || 0) * 1000,
+    fee: 0,
+    formats,
+    hasFlac: /FLAC|ALFLAC/i.test(formats),
+    traceId: m.traceid || '',
+    playable: false,
+  };
+}
+async function kwRadioFetchBatch(fid, offset) {
+  const params = new URLSearchParams({
+    type: '4', login: kwHasAccount() ? '1' : '0',
+    uid: kwHasAccount() ? kwAccount.loginUid : '0', kid: kwAccount.appuid,
+    ver: KW_SRC_PAY, fid: String(fid), size: '20', mid: '0', cover_rid: '0',
+    version: '3', locationid: '1', play_dur: '0', paytag: '1', m: '1',
+    encode: 'utf8', allpay: '0', notrace: '0', offset: String(offset || 0),
+    oaid: kwJfenc(KW_OAID), jfencv: 'oaid',
+  });
+  const cookie = kwJfenc('user=' + kwAccount.deviceId + ',ct=11,cv=12121,chid=40,os_ver=36,newdevice=1');
+  const body = await requestText(KW_RADIO_BASE + '?' + params.toString(), {
+    headers: { 'User-Agent': KW_UA_PAY, Accept: '*/*', encvCookies: cookie },
+  });
+  try { return JSON.parse(body); } catch (e) { throw new Error('newradio.nr 非 JSON'); }
+}
+// 并行按 rid 补封面 (pic.web 不走取链限速, 可并发); 单个 3s 超时, 失败留空。
+async function kwFillRadioCovers(tracks) {
+  const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
+  await Promise.allSettled(tracks.map(async t => {
+    if (t.cover) return;
+    const r = await withTimeout(handleKwPic(t.rid).catch(() => null), 3000);
+    if (r && r.cover) t.cover = r.cover;
+  }));
+  return tracks;
+}
+async function handleKwRadio(fid, size, offset) {
+  const channelFid = String(fid || '-26711').trim() || '-26711';
+  const want = Math.max(1, Math.min(30, Number(size) || 15));
+  let cursor = Number(offset) || 0;
+  const tracks = [];
+  const seen = new Set();
+  const maxBatches = Math.ceil(want / 5) + 2;   // 每批 5 首, 留 2 批冗余余量
+  for (let batches = 0; tracks.length < want && batches < maxBatches; batches++) {
+    let j;
+    try { j = await kwRadioFetchBatch(channelFid, cursor); }
+    catch (e) { console.warn('[KwRadio] 批次失败:', e.message); break; }
+    if (!j || j.state !== 'success' || !Array.isArray(j.lists) || !j.lists.length) break;
+    cursor = Number(j.offset) || (cursor + j.lists.length);   // 用服务端回传 offset 续翻
+    for (const raw of j.lists) {
+      const t = kwMapRadioTrack(raw);
+      if (t && !seen.has(t.rid)) { seen.add(t.rid); tracks.push(t); }
+    }
+  }
+  await kwFillRadioCovers(tracks);
+  return {
+    provider: 'kw',
+    radio: { fid: channelFid, title: kwRadioTitle(channelFid), loggedIn: kwHasAccount() },
+    tracks,
+    offset: cursor,
+    hasMore: tracks.length > 0,
+  };
+}
+// type=6 口味/时长上报 (复刻抓包: mtaste 缺省 -2 中性, playtime/duration 为毫秒)。
+async function handleKwRadioReport(fid, rid, taste, playtime, duration) {
+  const songRid = String(rid || '').replace(/^MUSIC_/, '').trim();
+  if (!songRid || !/^\d+$/.test(songRid)) return { ok: false, error: 'MISSING_RID' };
+  const params = new URLSearchParams({
+    type: '6', login: kwHasAccount() ? '1' : '0',
+    uid: kwHasAccount() ? kwAccount.loginUid : '0', kid: kwAccount.appuid,
+    ver: KW_SRC_PAY, fid: String(fid || '-26711'), mid: songRid,
+    mtaste: String(taste == null || taste === '' ? -2 : taste),
+    playtime: String(Math.max(0, Math.round(Number(playtime) || 0))),
+    duration: String(Math.max(0, Math.round(Number(duration) || 0))),
+  });
+  try {
+    const body = await requestText(KW_RADIO_BASE + '?' + params.toString(), {
+      headers: { 'User-Agent': KW_UA_PAY, Accept: '*/*' },
+    });
+    return { ok: /success/i.test(body) };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 // ====================================================================
 //  HTTP Server
 // ====================================================================
@@ -4646,6 +4770,39 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       console.error('[KwPlaylistTracks]', err);
       sendJSON(res, { provider: 'kw', error: err.message, tracks: [] }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/radio') {
+    try {
+      const fid = url.searchParams.get('fid') || url.searchParams.get('id') || '-26711';
+      const size = parseInt(url.searchParams.get('size') || '15', 10) || 15;
+      const offset = parseInt(url.searchParams.get('offset') || '0', 10) || 0;
+      sendJSON(res, await handleKwRadio(fid, size, offset));
+    } catch (err) {
+      console.error('[KwRadio]', err);
+      sendJSON(res, { provider: 'kw', error: err.message, tracks: [], offset: 0, hasMore: false }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/radio/channels') {
+    sendJSON(res, { provider: 'kw', channels: KW_RADIO_CHANNELS });
+    return;
+  }
+
+  if (pn === '/api/kw/radio/report') {
+    try {
+      const fid = url.searchParams.get('fid') || '-26711';
+      const rid = url.searchParams.get('rid') || url.searchParams.get('id') || '';
+      const taste = url.searchParams.get('taste');
+      const playtime = url.searchParams.get('playtime') || '0';
+      const duration = url.searchParams.get('duration') || '0';
+      sendJSON(res, await handleKwRadioReport(fid, rid, taste, playtime, duration));
+    } catch (err) {
+      console.error('[KwRadioReport]', err);
+      sendJSON(res, { ok: false, error: err.message }, 500);
     }
     return;
   }
