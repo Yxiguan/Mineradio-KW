@@ -26,6 +26,12 @@ function lyricEndpointForSong(songOrId) {
       '&albumAudioId=' + encodeURIComponent(song.albumAudioId || song.album_audio_id || song.mixSongId || '') +
       '&duration=' + encodeURIComponent(playbackDurationFromSong(song) || '');
   }
+  if (provider === 'kw') {
+    return '/api/kw/lyric?rid=' + encodeURIComponent(song.rid || song.id || '') +
+      '&name=' + encodeURIComponent(song.name || '') +
+      '&artist=' + encodeURIComponent(song.artist || '') +
+      '&duration=' + encodeURIComponent(playbackDurationFromSong(song) || '');
+  }
   if (provider === 'qishui') {
     return '/api/qishui/lyric?id=' + encodeURIComponent(song.id || song.providerSongId || '');
   }
@@ -39,7 +45,7 @@ function lyricEndpointForSong(songOrId) {
 function persistentLyricCacheKey(song) {
   song = song || {};
   var provider = typeof songProviderKey === 'function' ? songProviderKey(song) : (song.source || song.provider || 'netease');
-  var id = song.id || song.mid || song.songmid || song.hash || '';
+  var id = song.id || song.mid || song.songmid || song.rid || song.hash || '';
   var artist = song.artist || song.singer || song.artists || '';
   return ['lyrics-v1', provider, id, song.name || song.title || '', artist].join('|');
 }

@@ -9207,6 +9207,26 @@ body.login-guide-active #login-guide-canvas {
   box-shadow: 0 0 0 1px rgba(191, 214, 107, .10)
 }
 
+.kw-login-input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, .22);
+  color: rgba(255, 255, 255, .86);
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  margin-bottom: 8px;
+  box-sizing: border-box
+}
+
+.kw-login-input:focus {
+  border-color: rgba(108, 168, 234, .46);
+  box-shadow: 0 0 0 1px rgba(108, 168, 234, .12)
+}
+
 .qq-cookie-panel.spotify-guide-panel .qq-cookie-input {
   height: 46px
 }

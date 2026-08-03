@@ -249,6 +249,9 @@ function makeContentListManager() {
     if (contentSource.provider === 'qq') {
       return '/api/qq/playlist/tracks?id=' + encodeURIComponent(contentSource.id) + '&limit=' + limit + '&offset=' + Math.max(0, offset || 0);
     }
+    if (contentSource.provider === 'kw') {
+      return '/api/kw/playlist/tracks?id=' + encodeURIComponent(contentSource.id) + '&limit=' + limit + '&offset=' + Math.max(0, offset || 0);
+    }
     if (contentSource.provider === 'kugou') {
       return '/api/kugou/playlist/tracks?id=' + encodeURIComponent(contentSource.id) + '&limit=' + limit + '&offset=' + Math.max(0, offset || 0);
     }
@@ -701,28 +704,21 @@ function makeContentListManager() {
       }
       var podcastCollectionKey = String(playlistId || '').indexOf('podcast:') === 0 ? String(playlistId).slice(8) : '';
       var qqPlaylistId = String(playlistId || '').indexOf('qq:') === 0 ? String(playlistId).slice(3) : '';
+      var kwPlaylistId = String(playlistId || '').indexOf('kw:') === 0 ? String(playlistId).slice(3) : '';
       var kugouPlaylistId = String(playlistId || '').indexOf('kugou:') === 0 ? String(playlistId).slice(6) : '';
       var qishuiPlaylistId = String(playlistId || '').indexOf('qishui:') === 0 ? String(playlistId).slice(7) : '';
       var spotifyPlaylistId = String(playlistId || '').indexOf('spotify:') === 0 ? String(playlistId).slice(8) : '';
       contentKind = podcastCollectionKey ? 'podcast' : 'playlist';
       contentSource = podcastCollectionKey ? null : {
-        provider: qqPlaylistId ? 'qq' : (kugouPlaylistId ? 'kugou' : (qishuiPlaylistId ? 'qishui' : (spotifyPlaylistId ? 'spotify' : 'netease'))),
-        id: qqPlaylistId || kugouPlaylistId || qishuiPlaylistId || spotifyPlaylistId || playlistId
+        provider: qqPlaylistId ? 'qq' : (kwPlaylistId ? 'kw' : (kugouPlaylistId ? 'kugou' : (qishuiPlaylistId ? 'qishui' : (spotifyPlaylistId ? 'spotify' : 'netease')))),
+        id: qqPlaylistId || kwPlaylistId || kugouPlaylistId || qishuiPlaylistId || spotifyPlaylistId || playlistId
       };
       // 拉取歌单/播客集合
       var r = null;
       try {
         r = podcastCollectionKey
           ? await apiJson('/api/podcast/my/items?key=' + encodeURIComponent(podcastCollectionKey) + '&limit=' + PLAYLIST_LAZY_BATCH_SIZE)
-          : (qqPlaylistId
-            ? await apiJson('/api/qq/playlist/tracks?id=' + encodeURIComponent(qqPlaylistId) + '&limit=' + PLAYLIST_LAZY_BATCH_SIZE + '&offset=0')
-            : (kugouPlaylistId
-              ? await apiJson('/api/kugou/playlist/tracks?id=' + encodeURIComponent(kugouPlaylistId) + '&limit=' + PLAYLIST_LAZY_BATCH_SIZE + '&offset=0')
-              : (qishuiPlaylistId
-                ? await apiJson('/api/qishui/playlist/tracks?id=' + encodeURIComponent(qishuiPlaylistId) + '&limit=' + PLAYLIST_LAZY_BATCH_SIZE + '&offset=0')
-                : (spotifyPlaylistId
-                  ? await apiJson('/api/spotify/playlist/tracks?id=' + encodeURIComponent(spotifyPlaylistId) + '&limit=' + PLAYLIST_LAZY_BATCH_SIZE + '&offset=0')
-                  : await apiJson('/api/playlist/tracks?id=' + encodeURIComponent(playlistId) + '&limit=' + PLAYLIST_LAZY_BATCH_SIZE + '&offset=0')))));
+          : await apiJson(contentPageUrl(0));
       } catch (e) {
         if (!open || token !== requestToken) return;
         console.warn('[ShelfContentLoadApi]', playlistId, e);

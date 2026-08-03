@@ -20,7 +20,7 @@ async function apiJson(url, opts) {
 function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function normalizePlaybackQuality(value) {
   value = String(value || '').toLowerCase();
-  if (value === 'jymaster' || value === 'master' || value === 'svip') return 'jymaster';
+  if (value === 'jymaster' || value === 'master' || value === 'svip' || value === 'zhizhen' || value === 'zply') return 'jymaster';
   if (value === 'hires' || value === 'hi-res' || value === 'highres' || value === 'highest') return 'hires';
   if (value === 'lossless' || value === 'flac' || value === 'sq') return 'lossless';
   if (value === 'exhigh' || value === 'high' || value === '320k' || value === 'hq') return 'exhigh';
@@ -30,6 +30,7 @@ function normalizePlaybackQuality(value) {
 function normalizePlaybackProvider(provider) {
   if (provider === 'qq') return 'qq';
   if (provider === 'kugou') return 'kugou';
+  if (provider === 'kw' || provider === 'kuwo') return 'kw';
   if (provider === 'qishui') return 'qishui';
   if (provider === 'spotify') return 'spotify';
   return 'netease';
@@ -83,6 +84,14 @@ function playbackQualityLabel(value, provider) {
     if (value === 'standard') return '酷狗 128k';
     return '酷狗无损';
   }
+  if (provider === 'kw') {
+    if (value === 'jymaster') return '酷我至臻';
+    if (value === 'hires') return '酷我 Hi-Res';
+    if (value === 'lossless') return '酷我无损';
+    if (value === 'exhigh') return '酷我 320k';
+    if (value === 'standard') return '酷我 128k';
+    return '酷我无损';
+  }
   if (value === 'jymaster') return '超清母带';
   if (value === 'hires') return '高清臻音';
   if (value === 'lossless') return '无损';
@@ -109,6 +118,14 @@ function playbackQualityShortLabel(value, provider) {
     if (value === 'standard') return 'KG 128';
     return 'KG SQ';
   }
+  if (provider === 'kw') {
+    if (value === 'jymaster') return 'KW 至臻';
+    if (value === 'hires') return 'KW Hires';
+    if (value === 'lossless') return 'KW SQ';
+    if (value === 'exhigh') return 'KW 320';
+    if (value === 'standard') return 'KW 128';
+    return 'KW SQ';
+  }
   if (value === 'jymaster') return '母带';
   if (value === 'hires') return '臻音';
   if (value === 'lossless') return 'SQ';
@@ -131,7 +148,7 @@ function playbackQualityWasDowngraded(requested, resolved, provider) {
 function playbackQualityTrackKey(song, provider) {
   provider = normalizePlaybackProvider(provider || songProviderKey(song));
   song = song || {};
-  var id = song.id || song.mid || song.songmid || song.hash || song.fileHash || song.audioHash || song.providerSongId || '';
+  var id = song.id || song.mid || song.songmid || song.rid || song.hash || song.fileHash || song.audioHash || song.providerSongId || '';
   var media = song.mediaMid || song.media_mid || song.albumAudioId || song.album_audio_id || song.mixSongId || '';
   if (!id) id = [song.name || song.title || '', song.artist || '', song.album || ''].join('|');
   return provider + ':' + String(id || '').trim() + ':' + String(media || '').trim();
@@ -193,6 +210,7 @@ function readPlaybackQualityPreference() {
     netease: PLAYBACK_QUALITY_DEFAULTS.netease,
     qq: PLAYBACK_QUALITY_DEFAULTS.qq,
     kugou: PLAYBACK_QUALITY_DEFAULTS.kugou,
+    kw: PLAYBACK_QUALITY_DEFAULTS.kw,
     qishui: PLAYBACK_QUALITY_DEFAULTS.qishui,
     spotify: PLAYBACK_QUALITY_DEFAULTS.spotify
   };
@@ -205,6 +223,7 @@ function readPlaybackQualityPreference() {
         netease: normalizePlaybackQualityForProvider(legacy, 'netease'),
         qq: normalizePlaybackQualityForProvider(legacy, 'qq'),
         kugou: normalizePlaybackQualityForProvider(legacy, 'kugou'),
+        kw: normalizePlaybackQualityForProvider(legacy, 'kw'),
         qishui: normalizePlaybackQualityForProvider(fallback.qishui, 'qishui'),
         spotify: normalizePlaybackQualityForProvider(fallback.spotify, 'spotify')
       };
@@ -215,6 +234,7 @@ function readPlaybackQualityPreference() {
       netease: normalizePlaybackQualityForProvider(parsed.netease || fallback.netease, 'netease'),
       qq: normalizePlaybackQualityForProvider(parsed.qq || fallback.qq, 'qq'),
       kugou: normalizePlaybackQualityForProvider(parsed.kugou || fallback.kugou || 'lossless', 'kugou'),
+      kw: normalizePlaybackQualityForProvider(parsed.kw || parsed.kuwo || fallback.kw || 'lossless', 'kw'),
       qishui: normalizePlaybackQualityForProvider(parsed.qishui || fallback.qishui || 'standard', 'qishui'),
       spotify: normalizePlaybackQualityForProvider(parsed.spotify || fallback.spotify || 'standard', 'spotify')
     };

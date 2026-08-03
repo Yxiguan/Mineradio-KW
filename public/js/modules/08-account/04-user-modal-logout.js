@@ -1,5 +1,5 @@
 function loggedProviderCount() {
-  return ['netease', 'qq', 'kugou', 'qishui', 'spotify'].filter(function (key) { return hasPlatformLogin(key); }).length;
+  return ['netease', 'qq', 'kugou', 'kw', 'qishui', 'spotify'].filter(function (key) { return hasPlatformLogin(key); }).length;
 }
 function updateUserModalUi() {
   activeAccountProvider = firstLoggedProvider();
@@ -14,6 +14,7 @@ function updateUserModalUi() {
   var addNetease = document.getElementById('account-add-netease');
   var addQQ = document.getElementById('account-add-qq');
   var addKugou = document.getElementById('account-add-kugou');
+  var addKw = document.getElementById('account-add-kw');
   var addQishui = document.getElementById('account-add-qishui');
   var addSpotify = document.getElementById('account-add-spotify');
   if (chip) {
@@ -42,6 +43,11 @@ function updateUserModalUi() {
       var spProduct = st && st.product === 'premium' ? 'Spotify Premium' : (st && st.product ? ('Spotify ' + String(st.product).toUpperCase()) : 'Spotify 方案未知');
       vipEl.textContent = 'ID: ' + ((st && st.userId) || '-') + '  /  ' + spProduct + '  /  可同步歌单和 Liked Songs';
       vipEl.style.color = hasProviderVip('spotify', st) ? 'rgba(30,215,96,0.86)' : 'rgba(30,215,96,0.60)';
+    } else if (activeAccountProvider === 'kw') {
+      var kwVipLevel = providerVipLevel('kw', st);
+      var kwVipLabel = kwVipLevel === 'svip' ? '酷我 VIP 会员' : (kwVipLevel === 'vip' ? '酷我 VIP 会员' : '酷我音乐账号');
+      vipEl.textContent = 'UID: ' + ((st && st.userId) || '-') + '  /  ' + kwVipLabel;
+      vipEl.style.color = hasProviderVip('kw', st) ? 'rgba(108,168,234,0.86)' : 'rgba(108,168,234,0.58)';
     } else {
       var qqVipLevel = providerVipLevel('qq', st);
       var qqVipPending = qqLoginNeedsAuthorizationRefresh(st) || (typeof qqMembershipNeedsSync === 'function' && qqMembershipNeedsSync(st));
@@ -50,20 +56,22 @@ function updateUserModalUi() {
       vipEl.style.color = qqVipPending ? 'rgba(255,232,174,0.86)' : (hasProviderVip('qq', st) ? 'rgba(0,245,212,0.82)' : 'rgba(0,245,212,0.58)');
     }
   }
-  ['netease', 'qq', 'kugou', 'qishui', 'spotify', 'both'].forEach(function (key) {
+  ['netease', 'qq', 'kugou', 'kw', 'qishui', 'spotify', 'both'].forEach(function (key) {
     var btn = document.getElementById('user-provider-' + key);
     if (btn) btn.classList.toggle('active', key === 'both' ? dualAccountMode : (!dualAccountMode && activeAccountProvider === key));
   });
   if (addNetease) addNetease.style.display = hasPlatformLogin('netease') ? 'none' : '';
   if (addQQ) addQQ.textContent = hasPlatformLogin('qq') ? '查看 QQ 音乐' : '补登 QQ 音乐';
   if (addKugou) addKugou.textContent = hasPlatformLogin('kugou') ? '查看酷狗音乐' : '补登酷狗音乐';
+  if (addKw) addKw.textContent = hasPlatformLogin('kw') ? '查看酷我音乐' : '登录酷我音乐';
   if (addQishui) addQishui.textContent = hasPlatformLogin('qishui') ? '重新登录汽水' : '登录汽水音乐';
   if (addSpotify) addSpotify.textContent = hasPlatformLogin('spotify') ? '查看 Spotify' : '连接 Spotify';
   if (logoutBtn) logoutBtn.textContent =
     activeAccountProvider === 'qq' ? '退出 QQ 音乐' :
     (activeAccountProvider === 'kugou' ? '退出酷狗音乐' :
+    (activeAccountProvider === 'kw' ? '退出酷我音乐' :
     (activeAccountProvider === 'qishui' ? '清除汽水登录态' :
-    (activeAccountProvider === 'spotify' ? '退出 Spotify' : '退出网易云')));
+    (activeAccountProvider === 'spotify' ? '退出 Spotify' : '退出网易云'))));
   if (hint) hint.textContent = dualAccountMode
     ? '右上角已切换为多平台并排展示。'
     : '可切换右上角展示的平台；“我两个都要”会并排显示当前已登录的平台。';
@@ -80,7 +88,7 @@ function showUserModal() {
 }
 function closeUserModal() { closeGsapModal(document.getElementById('user-modal')); }
 function setActiveAccountProvider(provider) {
-  provider = provider === 'qq' ? 'qq' : (provider === 'kugou' ? 'kugou' : (provider === 'qishui' ? 'qishui' : (provider === 'spotify' ? 'spotify' : 'netease')));
+  provider = provider === 'qq' ? 'qq' : (provider === 'kugou' ? 'kugou' : (provider === 'kw' || provider === 'kuwo' ? 'kw' : (provider === 'qishui' ? 'qishui' : (provider === 'spotify' ? 'spotify' : 'netease'))));
   if (!hasPlatformLogin(provider)) {
     openProviderLogin(provider);
     return;
@@ -189,6 +197,7 @@ async function logoutAllAccountsAndResetEasterEgg() {
       apiJson('/api/logout'),
       apiJson('/api/qq/logout'),
       apiJson('/api/kugou/logout'),
+      apiJson('/api/kw/logout'),
       apiJson('/api/qishui/logout'),
       apiJson('/api/spotify/logout')
     ]);
@@ -282,6 +291,20 @@ async function logoutActiveAccount() {
     if (hasAnyPlatformLogin()) updateUserModalUi();
     else closeUserModal();
     showToast('已退出酷狗音乐');
+    return;
+  }
+  if (activeAccountProvider === 'kw') {
+    try { await apiJson('/api/kw/logout'); } catch (e) { }
+    kuwoLoginStatus = { provider: 'kw', loggedIn: false, configured: false, preview: false, nickname: '酷我音乐', userId: '', avatar: '', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, hasAccount: false };
+    kwPlaylists = [];
+    userPlaylists = userPlaylists.filter(function (pl) { return pl.provider !== 'kw'; });
+    playlistCatalogRevision += 1;
+    dualAccountMode = false;
+    activeAccountProvider = firstLoggedProvider();
+    renderUserBtn();
+    if (hasAnyPlatformLogin()) updateUserModalUi();
+    else closeUserModal();
+    showToast('已退出酷我音乐');
     return;
   }
   if (activeAccountProvider === 'qq') {

@@ -221,6 +221,21 @@ function updateListenStatsTick(force) {
   if (!listenSession) return;
   tickListenSessionSnapshot(listenSession, force);
 }
+// 私人电台 type=6 口味上报: 播放/切歌时把上一首的收听时长回传酷我 FM (skip 也是重要负反馈), fire-and-forget。
+function maybeReportKwRadio(session) {
+  try {
+    var ctx = session && session.context;
+    if (!ctx || ctx.type !== 'kw-radio') return;
+    var snap = session.song || {};
+    var rid = snap.id || '';
+    if (!rid) return;
+    var playtime = Math.max(0, Math.round(session.listenMs || 0));
+    var duration = Math.max(0, Math.round(snap.duration || 0));
+    apiJson('/api/kw/radio/report?fid=' + encodeURIComponent(ctx.fid || '-26711') +
+      '&rid=' + encodeURIComponent(rid) + '&playtime=' + playtime + '&duration=' + duration + '&t=' + Date.now())
+      .catch(function () {});
+  } catch (e) { }
+}
 function finalizeListenSession(completed) {
   if (!listenSession) return;
   var session = listenSession;
@@ -229,6 +244,7 @@ function finalizeListenSession(completed) {
     ? Math.round(audio.duration * 1000)
     : listenSnapshotDurationMs(session.song);
   listenSession = null;
+  maybeReportKwRadio(session);   // 私人电台: 无论听多久都上报口味 (含 skip)
   var effective = completed || session.listenMs >= 45000 || session.maxProgress >= 0.5 || (!audio || !audio.duration ? session.listenMs >= 30000 : false);
   if (!effective) return;
   var now = Date.now();

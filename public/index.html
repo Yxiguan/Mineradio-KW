@@ -114,6 +114,7 @@
             aria-selected="false">NE</button>
           <button id="search-mode-qq" type="button" onclick="setSearchMode('qq')" aria-selected="false">QQ</button>
           <button id="search-mode-kugou" type="button" onclick="setSearchMode('kugou')" aria-selected="false">KG</button>
+          <button id="search-mode-kw" type="button" onclick="setSearchMode('kw')" aria-selected="false">KW</button>
           <button id="search-mode-qishui" type="button" onclick="setSearchMode('qishui')" aria-selected="false">QS</button>
           <button id="search-mode-spotify" type="button" onclick="setSearchMode('spotify')" aria-selected="false">SP</button>
           <button id="search-mode-podcast" type="button" onclick="setSearchMode('podcast')"
@@ -295,6 +296,7 @@
           <button type="button" role="tab" data-home-recommend-source="qishui" aria-selected="false">汽水</button>
           <button type="button" role="tab" data-home-recommend-source="qq" aria-selected="false">QQ</button>
           <button type="button" role="tab" data-home-recommend-source="kugou" aria-selected="false">酷狗</button>
+          <button type="button" role="tab" data-home-recommend-source="kw" aria-selected="false">酷我</button>
           <button type="button" role="tab" data-home-recommend-source="spotify" aria-selected="false">Spotify</button>
         </div>
         <div id="home-platform-recommend-status" class="home-platform-recommend-status" role="status"
@@ -1476,6 +1478,8 @@
                 class="provider-logo">QQ</span><b>QQ 音乐</b><small>官方扫码 / Cookie</small><span class="flow-port out" data-login-provider-output="qq" title="拖到 MR 接入口"></span></button>
             <button id="login-provider-kugou" class="kugou workflow-node" type="button" data-login-provider="kugou" onclick="selectLoginProviderNode('kugou')"><span
                 class="provider-logo">KG</span><b>酷狗音乐</b><small>官方窗口 / Cookie</small><span class="flow-port out" data-login-provider-output="kugou" title="拖到 MR 接入口"></span></button>
+            <button id="login-provider-kw" class="kw workflow-node" type="button" data-login-provider="kw" onclick="selectLoginProviderNode('kw')"><span
+                class="provider-logo">KW</span><b>酷我音乐</b><small>账号 / 至臻</small><span class="flow-port out" data-login-provider-output="kw" title="拖到 MR 接入口"></span></button>
             <button id="login-provider-qishui" class="qishui workflow-node" type="button" data-login-provider="qishui" onclick="selectLoginProviderNode('qishui')"><span
                 class="provider-logo">QS</span><b>汽水音乐</b><small>官方扫码 / 抖音确认</small><span class="flow-port out" data-login-provider-output="qishui" title="拖到 MR 接入口"></span></button>
             <button id="login-provider-spotify" class="spotify workflow-node" type="button" data-login-provider="spotify" onclick="selectLoginProviderNode('spotify')"><span
@@ -1512,6 +1516,17 @@
                 <div class="qq-cookie-note">从 y.qq.com 的登录会话导入。</div>
                 <button id="qq-cookie-save-btn" class="modal-btn primary" type="button"
                   onclick="submitQQCookieLogin()">保存</button>
+              </div>
+            </div>
+            <div id="kw-login-panel" class="qq-cookie-panel">
+              <input id="kw-login-username" class="kw-login-input" type="text" spellcheck="false" autocomplete="off"
+                placeholder="酷我账号（手机号）">
+              <input id="kw-login-password" class="kw-login-input" type="password" autocomplete="off"
+                placeholder="密码" onkeydown="if(event.key==='Enter')submitKwLogin()">
+              <div class="qq-cookie-actions">
+                <div class="qq-cookie-note">酷我账号密码登录，用于至臻音质、歌单与私人 FM。</div>
+                <button id="kw-login-save-btn" class="modal-btn primary" type="button"
+                  onclick="submitKwLogin()">登录</button>
               </div>
             </div>
           </div>
@@ -1584,6 +1599,7 @@
             onclick="setActiveAccountProvider('netease')">网易云</button>
           <button id="user-provider-qq" class="qq" type="button" onclick="setActiveAccountProvider('qq')">QQ 音乐</button>
           <button id="user-provider-kugou" class="kugou" type="button" onclick="setActiveAccountProvider('kugou')">酷狗音乐</button>
+          <button id="user-provider-kw" class="kw" type="button" onclick="setActiveAccountProvider('kw')">酷我音乐</button>
           <button id="user-provider-qishui" class="qishui" type="button" onclick="setActiveAccountProvider('qishui')">汽水音乐</button>
           <button id="user-provider-spotify" class="spotify" type="button" onclick="setActiveAccountProvider('spotify')">Spotify</button>
           <button id="user-provider-both" class="both" type="button" onclick="enableDualAccountView()">我两个都要</button>
@@ -1592,6 +1608,7 @@
           <button id="account-add-netease" class="modal-btn" onclick="openProviderLogin('netease')">补登网易云</button>
           <button id="account-add-qq" class="modal-btn" onclick="openProviderLogin('qq')">补登 QQ 音乐</button>
           <button id="account-add-kugou" class="modal-btn" onclick="openProviderLogin('kugou')">补登酷狗音乐</button>
+          <button id="account-add-kw" class="modal-btn" onclick="openProviderLogin('kw')">登录酷我音乐</button>
           <button id="account-add-qishui" class="modal-btn" onclick="openProviderLogin('qishui')">登录汽水音乐</button>
           <button id="account-add-spotify" class="modal-btn" onclick="openProviderLogin('spotify')">连接 Spotify</button>
         </div>

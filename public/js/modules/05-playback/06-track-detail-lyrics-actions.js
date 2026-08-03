@@ -14,6 +14,7 @@ function songSourceLabel(song) {
   if (song.provider === 'qq' || song.source === 'qq' || song.type === 'qq') return 'QQ 音乐';
   if (song.provider === 'qishui' || song.source === 'qishui' || song.type === 'qishui') return '汽水音乐';
   if (song.provider === 'kugou' || song.source === 'kugou' || song.type === 'kugou' || song.hash || song.audioHash) return '酷狗音乐';
+  if (song.provider === 'kw' || song.source === 'kw' || song.type === 'kw' || song.provider === 'kuwo' || song.source === 'kuwo' || song.type === 'kuwo' || song.rid) return '酷我音乐';
   if (song.type === 'local') return '本地上传';
   if (song.type === 'podcast' || song.source === 'podcast') return '网易云播客';
   return '网易云音乐';
@@ -1234,7 +1235,7 @@ function songAccountStateKey(song) {
 }
 function playlistAccountProvider(playlist) {
   var provider = String(playlist && (playlist.provider || playlist.source) || '').toLowerCase();
-  return /^(netease|qq|kugou|qishui|spotify)$/.test(provider) ? provider : 'netease';
+  return /^(netease|qq|kw|kugou|qishui|spotify)$/.test(provider) ? provider : 'netease';
 }
 function songAccountLoginStatus(provider) {
   if (provider === 'spotify') return spotifyLoginStatus || {};
@@ -1358,7 +1359,7 @@ function syncLikeStatusForSong(song) {
 }
 function isLikedPlaylistContext(id, title, meta) {
   var rawId = String(id || '');
-  var idParts = rawId.match(/^(netease|qq|kugou|qishui|spotify):(.*)$/);
+  var idParts = rawId.match(/^(netease|qq|kw|kugou|qishui|spotify):(.*)$/);
   var provider = idParts ? idParts[1] : playlistAccountProvider(meta);
   var sid = idParts ? idParts[2] : rawId;
   var text = String(title || (meta && meta.name) || '').trim();

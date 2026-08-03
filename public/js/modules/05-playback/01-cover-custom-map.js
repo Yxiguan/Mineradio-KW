@@ -40,6 +40,12 @@ function coverProxySrc(url, cacheBust) {
 }
 function coverUrlWithSize(url, size) {
   if (!url || isInlineCoverSrc(url) || !/^https?:\/\//i.test(url)) return url || '';
+  // 酷我专辑封面/歌手头像分辨率写在路径段 /star/albumcover/<size>/ 或 /star/starheads/<size>/ 里;
+  // 网易云的 ?param=NyN 对酷我无效, 不改写就会停留在接口返回的 120px 缩略图。直接改尺寸段。
+  if (/\/star\/(?:albumcover|starheads)\/\d+\//.test(url)) {
+    var kwSize = Math.max(120, Math.min(1000, Math.round(Number(size) || 500)));
+    return url.replace(/(\/star\/(?:albumcover|starheads)\/)\d+\//, '$1' + kwSize + '/');
+  }
   if (!size) return url;
   var param = 'param=' + size + 'y' + size;
   if (/[?&]param=\d+y\d+/i.test(url)) return url.replace(/([?&])param=\d+y\d+/i, '$1' + param);
@@ -49,6 +55,7 @@ function songCustomCoverKey(song) {
   if (!song) return '';
   if (song.customCoverKey) return String(song.customCoverKey);
   if (song.provider === 'qq' || song.source === 'qq' || song.type === 'qq') return 'qq:' + (song.mid || song.songmid || song.id || (song.name + '|' + song.artist));
+  if (song.provider === 'kw' || song.source === 'kw' || song.type === 'kw') return 'kw:' + (song.rid || song.id || (song.name + '|' + song.artist));
   if (song.provider === 'qishui' || song.source === 'qishui' || song.type === 'qishui') return 'qishui:' + (song.id || song.providerSongId || (song.name + '|' + song.artist));
   if (song.provider === 'kugou' || song.source === 'kugou' || song.type === 'kugou' || song.hash || song.audioHash) return 'kugou:' + (song.hash || song.fileHash || song.audioHash || song.id || (song.name + '|' + song.artist));
   if (song.localKey) return 'local:' + song.localKey;

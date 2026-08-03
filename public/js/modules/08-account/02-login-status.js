@@ -376,6 +376,74 @@ function startKugouLoginStatusAutoRefresh() {
   }, 45000);
 }
 
+function normalizeKuwoLoginStatus(info) {
+  var fallback = { provider: 'kw', loggedIn: false, configured: false, preview: false, nickname: '酷我音乐', userId: '', avatar: '', vipType: 0, svipType: 0, vipLevel: 'none', isVip: false, isSvip: false, hasAccount: false, stale: false };
+  if (!info || !info.loggedIn) {
+    return Object.assign({}, fallback, info || {}, {
+      provider: 'kw',
+      loggedIn: false,
+      nickname: info && (info.nickname || info.nickName) || fallback.nickname,
+      userId: info && (info.userId || info.uid || info.loginUid) || '',
+      avatar: info && info.avatar || '',
+      vipType: Number(info && (info.vipType || info.vip_type || info.vip_lev) || 0) || 0,
+      vipLevel: info && (info.vipLevel || info.vip_level) || 'none',
+      isVip: !!(info && (info.isVip || info.vipType)),
+      isSvip: !!(info && info.isSvip),
+      hasAccount: !!(info && info.hasAccount),
+      stale: !!(info && info.stale)
+    });
+  }
+  var vip = Number(info.vipType || info.vip_type || info.vip_lev || 0) || 0;
+  return Object.assign({}, fallback, info, {
+    provider: 'kw',
+    loggedIn: true,
+    nickname: info.nickname || info.nickName || fallback.nickname,
+    userId: info.userId || info.uid || info.loginUid || '',
+    avatar: info.avatar || '',
+    vipType: vip,
+    vipLevel: vip >= 2 ? 'vip' : (vip >= 1 ? 'vip' : (info.vipLevel || 'none')),
+    isVip: vip > 0 || !!info.isVip,
+    isSvip: !!info.isSvip,
+    hasAccount: !!(info.hasAccount || info.username),
+    stale: !!info.stale
+  });
+}
+async function refreshKuwoLoginStatus() {
+  try {
+    var info = await apiJson('/api/kw/login/status?t=' + Date.now());
+    var prevLogged = !!kuwoLoginStatus.loggedIn;
+    kuwoLoginStatus = normalizeKuwoLoginStatus(info);
+    if (!kuwoLoginStatus.loggedIn) {
+      if (prevLogged || kuwoLoginWasLoggedIn) showToast(kuwoLoginStatus.stale ? '酷我音乐登录已失效' : '酷我音乐已掉登录');
+      kwPlaylists = [];
+      userPlaylists = userPlaylists.filter(function (pl) { return pl && pl.provider !== 'kw'; });
+      playlistCatalogRevision += 1;
+      homeDiscoverState.loaded = false;
+    } else if (!userPlaylists.some(function (pl) { return pl && pl.provider === 'kw'; })) {
+      homeDiscoverState.loaded = false;
+      homeDiscoverState.loggedIn = true;
+      refreshUserPlaylists(true);
+    } else if (kuwoLoginStatus.stale) {
+      showToast('酷我音乐登录状态可能已失效');
+    }
+    kuwoLoginWasLoggedIn = !!kuwoLoginStatus.loggedIn;
+    if (!hasPlatformLogin(activeAccountProvider)) activeAccountProvider = firstLoggedProvider();
+    renderUserBtn();
+    return kuwoLoginStatus;
+  } catch (e) {
+    console.warn('Kuwo login status failed:', e);
+    kuwoLoginStatus = normalizeKuwoLoginStatus(null);
+    renderUserBtn();
+    return kuwoLoginStatus;
+  }
+}
+function startKuwoLoginStatusAutoRefresh() {
+  if (kuwoLoginAutoRefreshTimer) clearInterval(kuwoLoginAutoRefreshTimer);
+  kuwoLoginAutoRefreshTimer = setInterval(function () {
+    refreshKuwoLoginStatus().catch(function (e) { console.warn('Kuwo login auto refresh failed:', e); });
+  }, 45000);
+}
+
 function normalizeQishuiLoginStatus(info) {
   var fallback = { provider: 'qishui', loggedIn: false, configured: false, oauthConfigured: false, oauthMissing: [], preview: false, nickname: '汽水音乐', userId: '', avatar: '', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, stale: false, playbackKeyReady: false, playbackMode: 'recommend-match', searchReady: false, publicCatalog: false };
   var configured = !!(info && (info.configured || info.loggedIn));

@@ -29,6 +29,7 @@ var homePlatformRecommendationState = {
   feeds: {
     qishui: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
     kugou: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
+    kw: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '', offset: 0, hasMore: false, radio: null },
     spotify: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
   },
 };
@@ -862,6 +863,7 @@ function homePlatformRecommendationSourceLabel(source) {
     qishui: '汽水',
     qq: 'QQ 音乐',
     kugou: '酷狗音乐',
+    kw: '酷我音乐',
     spotify: 'Spotify',
   }[source] || '当前平台';
 }
@@ -881,6 +883,13 @@ function homePlatformRecommendationFeedConfig(source) {
       cardLabel: '酷狗推荐 FM',
       readyText: '来自酷狗 FM 推荐',
       playlistName: '酷狗推荐 FM',
+    },
+    kw: {
+      endpoint: '/api/kw/radio?fid=-26711&size=15',
+      sectionTitle: '私人电台',
+      cardLabel: '酷我私人 FM',
+      readyText: '来自酷我私人 FM · 猜你喜欢',
+      playlistName: '酷我私人 FM',
     },
     spotify: {
       endpoint: '/api/spotify/recommendations?limit=12',
@@ -1134,6 +1143,9 @@ async function loadHomePlatformFeedRecommendations(source, force) {
     feedState.source = data && data.source ? String(data.source) : '';
     feedState.fallback = !!(data && data.fallback);
     feedState.provenance = data && data.provenance ? String(data.provenance) : '';
+    feedState.offset = data && data.offset != null ? Number(data.offset) : 0;
+    feedState.hasMore = !!(data && data.hasMore);
+    feedState.radio = (data && data.radio) || null;
     feedState.loaded = true;
   } catch (error) {
     console.warn('[HomePlatformFeed:' + source + ']', error);
@@ -1167,7 +1179,23 @@ function playHomePlatformFeedSong(source, index) {
   var feedState = homePlatformRecommendationState.feeds[source];
   var songs = feedState && feedState.songs || [];
   if (!config || !songs.length) return;
-  playQueue = songs.map(cloneSong);
+  var ctx = null;
+  var playbackContext = { type: 'home-platform-recommendation', playlistName: config.playlistName };
+  if (source === 'kw') {
+    // 酷我私人 FM: 挂 kw-radio 上下文, 供 playQueueAt 里无限续播与口味上报共享同一 offset 游标。
+    ctx = kwRadioContext({
+      fid: feedState.radio && feedState.radio.fid,
+      title: feedState.radio && feedState.radio.title,
+      offset: feedState.offset,
+      hasMore: feedState.hasMore,
+    });
+    playbackContext = ctx;
+  }
+  playQueue = songs.map(function (song) {
+    var c = cloneSong(song);
+    if (ctx) c.radioContext = ctx;
+    return c;
+  });
   currentIdx = Math.max(0, Math.min(playQueue.length - 1, Number(index) || 0));
   homeForcedOpen = false;
   homeSuppressed = false;
@@ -1177,8 +1205,53 @@ function playHomePlatformFeedSong(source, index) {
   if (typeof forcePlaybackControlsInteractive === 'function') forcePlaybackControlsInteractive();
   Promise.resolve(playQueueAt(currentIdx, {
     manual: true,
-    context: { type: 'home-platform-recommendation', playlistName: config.playlistName },
+    context: playbackContext,
   })).catch(function (error) { console.warn('[HomePlatformFeedPlay:' + source + ']', error); });
+}
+
+var kwRadioExtendBusy = false;
+// 私人电台(酷我猜你喜欢/私人 FM)上下文: 挂在每首歌的 radioContext 上, 供无限续播与口味上报共享同一 offset 游标。
+function kwRadioContext(radio) {
+  radio = radio || {};
+  return {
+    type: 'kw-radio',
+    provider: 'kw',
+    fid: String(radio.fid || '-26711'),
+    title: radio.title || '私人电台',
+    offset: Number(radio.offset) || 0,
+    hasMore: radio.hasMore !== false,
+    dry: 0,
+  };
+}
+// 无限续播: 播到临近队尾(剩 <=3 首)时, 用 offset 拉下一批酷我私人 FM 去重后追加进队列。
+function maybeExtendKwRadio(idx) {
+  var ctx = activeRadioContext;
+  if (!ctx || ctx.type !== 'kw-radio' || ctx.hasMore === false) return;
+  if (kwRadioExtendBusy) return;
+  if (idx < playQueue.length - 3) return;
+  kwRadioExtendBusy = true;
+  apiJson('/api/kw/radio?fid=' + encodeURIComponent(ctx.fid) + '&size=10&offset=' + encodeURIComponent(ctx.offset) + '&t=' + Date.now())
+    .then(function (data) {
+      var tracks = (data && data.tracks) || [];
+      var seen = {};
+      playQueue.forEach(function (s) { seen[String(s.rid || s.id)] = true; });
+      var fresh = tracks.filter(function (s) { return s && !seen[String(s.rid || s.id)]; }).map(function (song) {
+        var c = cloneSong(song); c.radioContext = ctx; return c;
+      });
+      if (fresh.length) {
+        playQueue = playQueue.concat(fresh);
+        ctx.dry = 0;
+        if (typeof safeRenderQueuePanel === 'function') safeRenderQueuePanel('kw-radio-extend');
+        if (typeof safeShelfRebuild === 'function') safeShelfRebuild('kw-radio-extend');
+      } else {
+        ctx.dry = (ctx.dry || 0) + 1;
+      }
+      if (data && typeof data.offset !== 'undefined') ctx.offset = data.offset;
+      // 连续 3 次拉不到新歌就停, 避免 FM 回环时空转
+      ctx.hasMore = !!(data && data.hasMore) && tracks.length > 0 && (ctx.dry || 0) < 3;
+    })
+    .catch(function (e) { console.warn('[KwRadioExtend]', e); })
+    .finally(function () { kwRadioExtendBusy = false; });
 }
 
 function closeHomePlatformRecommendations() {
@@ -1216,7 +1289,7 @@ function bindHomePlatformRecommendationControls() {
     closeHomePlatformRecommendations();
     if (kind === 'netease-playlist' && typeof openHomePlaylist === 'function') openHomePlaylist(index);
     else if (kind === 'netease-song' && typeof playHomeSong === 'function') playHomeSong(index);
-    else if (/^(qishui|kugou|spotify)-song$/.test(kind)) playHomePlatformFeedSong(kind.replace(/-song$/, ''), index);
+    else if (/^(qishui|kugou|kw|spotify)-song$/.test(kind)) playHomePlatformFeedSong(kind.replace(/-song$/, ''), index);
   });
   if (list) list.addEventListener('scroll', scheduleHomePlatformDailyWindowRender, { passive: true });
   window.addEventListener('resize', scheduleHomePlatformDailyWindowRender, { passive: true });
@@ -1248,7 +1321,7 @@ function openHomePlatformRecommendations(preferredSource) {
       : (kugouLoginStatus && kugouLoginStatus.loggedIn
         ? 'kugou'
         : (spotifyLoginStatus && (spotifyLoginStatus.loggedIn || spotifyLoginStatus.configured) ? 'spotify' : 'netease')));
-  var source = /^(netease|qishui|qq|kugou|spotify)$/.test(String(preferredSource || '')) ? preferredSource : defaultSource;
+  var source = /^(netease|qishui|qq|kugou|kw|spotify)$/.test(String(preferredSource || '')) ? preferredSource : defaultSource;
   loadHomePlatformRecommendations(source, false);
   setTimeout(function () {
     var activeTab = mask.querySelector('[data-home-recommend-source="' + source + '"]');

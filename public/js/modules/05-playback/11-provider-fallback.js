@@ -4,6 +4,7 @@ function playbackProviderLabel(song) {
   var provider = songProviderKey(song);
   if (provider === 'qq') return 'QQ 音乐';
   if (provider === 'kugou') return '酷狗音乐';
+  if (provider === 'kw') return '酷我音乐';
   if (provider === 'qishui') return '汽水音乐';
   if (provider === 'spotify') return 'Spotify';
   return '网易云';
@@ -300,7 +301,7 @@ function isSameTitleArtist(source, candidate) {
   return a.some(function (name) { return b.indexOf(name) >= 0; });
 }
 var SOURCE_FALLBACK_SEARCH_TIMEOUT_MS = 6500;
-var SOURCE_FALLBACK_DIRECT_PROVIDERS = ['netease', 'qq', 'kugou'];
+var SOURCE_FALLBACK_DIRECT_PROVIDERS = ['netease', 'qq', 'kugou', 'kw'];
 var SOURCE_FALLBACK_RECOVERY_TIMEOUT_MS = 20000;
 var SOURCE_FALLBACK_MAX_QUEUE_ADVANCES = 2;
 var SOURCE_FALLBACK_MAX_PROVIDER_ATTEMPTS = 4;
@@ -457,6 +458,7 @@ function awaitSourceFallbackBudget(promise, recovery) {
 function sourceFallbackProviderTitle(provider) {
   if (provider === 'qq') return 'QQ 音乐';
   if (provider === 'kugou') return '酷狗音乐';
+  if (provider === 'kw') return '酷我音乐';
   return '网易云';
 }
 function sourceFallbackProviderReady(provider) {
@@ -496,7 +498,9 @@ async function searchAlternatePlatformSong(song, requestedTarget, recovery) {
     ? '/api/qq/search?keywords=' + encodeURIComponent(query) + '&limit=8'
     : (target === 'kugou'
       ? '/api/kugou/search?keywords=' + encodeURIComponent(query) + '&limit=8'
-      : '/api/search?keywords=' + encodeURIComponent(query) + '&limit=12');
+      : (target === 'kw'
+        ? '/api/kw/search?keywords=' + encodeURIComponent(query) + '&limit=8'
+        : '/api/search?keywords=' + encodeURIComponent(query) + '&limit=12'));
   var data = await awaitSourceFallbackBudget(
     apiJson(url, { timeoutMs: SOURCE_FALLBACK_SEARCH_TIMEOUT_MS }),
     recovery

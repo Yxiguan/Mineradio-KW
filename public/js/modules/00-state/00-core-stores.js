@@ -31,10 +31,13 @@ var kugouLoginAutoRefreshTimer = null;
 var qishuiLoginAutoRefreshTimer = null;
 var spotifyLoginStatus = { provider: 'spotify', loggedIn: false, configured: false, oauthConfigured: false, oauthMissing: [], preview: false, nickname: 'Spotify', userId: '', avatar: '', product: '', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, playbackKeyReady: false, playbackMode: 'recommend-match' };
 var spotifyLoginAutoRefreshTimer = null;
+var kuwoLoginStatus = { provider: 'kw', loggedIn: false, configured: false, preview: false, nickname: '酷我音乐', userId: '', avatar: '', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, hasAccount: false };
+var kuwoLoginAutoRefreshTimer = null;
 var qqLoginWasLoggedIn = false;
 var kugouLoginWasLoggedIn = false;
 var qishuiLoginWasLoggedIn = false;
 var spotifyLoginWasLoggedIn = false;
+var kuwoLoginWasLoggedIn = false;
 var loginProvider = 'netease';
 var activeAccountProvider = 'netease';
 var dualAccountMode = false;
@@ -60,7 +63,7 @@ var playbackResumeRecovery = { serial: 0, pending: false, lastAttemptAt: 0, last
 var albumGaplessState = { enabled: false, defaultEnabled: true, albumKey: '', disabledAlbumKey: '', context: null, preload: null, serial: 0, monitorTimer: 0, handoff: false };
 var PLAYBACK_RESUME_STALL_DELAYS = [1600, 3600];
 var PLAYBACK_RESUME_LONG_PAUSE_MS = 8 * 60 * 1000;
-var PLAYBACK_RESUME_LONG_PAUSE_PROVIDER_MS = { qishui: 3 * 60 * 1000, qq: 8 * 60 * 1000, kugou: 8 * 60 * 1000, netease: 12 * 60 * 1000 };
+var PLAYBACK_RESUME_LONG_PAUSE_PROVIDER_MS = { qishui: 3 * 60 * 1000, qq: 8 * 60 * 1000, kugou: 8 * 60 * 1000, kw: 8 * 60 * 1000, netease: 12 * 60 * 1000 };
 var AUDIO_FADE_STORE_KEY = 'mineradio-audio-fade-v1';
 var AUDIO_FADE_MIN_MS = 0;
 var AUDIO_FADE_MAX_MS = 3000;
@@ -69,7 +72,7 @@ var AUDIO_FADE_IN_MS = audioFadePreference.fadeInMs;
 var AUDIO_FADE_OUT_MS = audioFadePreference.fadeOutMs;
 var AUDIO_SILENCE_GAIN = 0.0001;
 var audioFadeEnvelope = 1;
-var userPlaylists = [], neteasePlaylists = [], qqPlaylists = [], kugouPlaylists = [], qishuiPlaylists = [], spotifyPlaylists = [], myPodcastCollections = [], myPodcastItems = {}, playlistCoverCache = {};
+var userPlaylists = [], neteasePlaylists = [], qqPlaylists = [], kugouPlaylists = [], kwPlaylists = [], qishuiPlaylists = [], spotifyPlaylists = [], myPodcastCollections = [], myPodcastItems = {}, playlistCoverCache = {};
 var queueHydrationState = {
   token: 0,
   active: false,
@@ -109,7 +112,7 @@ var AUDIO_INPUT_BRIDGE_STORE_KEY = 'mineradio-audio-input-bridge-v1';
 var PROVIDER_VIP_AUDIT_STORE_KEY = 'mineradio-provider-vip-audit-v1';
 var QQ_PLAYBACK_VIP_EVIDENCE_STORE_KEY = 'mineradio-qq-playback-vip-evidence-v1';
 var LOGIN_COOKIE_EXPORT_STORE_KEY = 'mineradio-login-cookie-export-v1';
-var PLAYBACK_QUALITY_DEFAULTS = { netease: 'hires', qq: 'lossless', kugou: 'lossless', qishui: 'standard', spotify: 'standard' };
+var PLAYBACK_QUALITY_DEFAULTS = { netease: 'hires', qq: 'lossless', kugou: 'lossless', kw: 'lossless', qishui: 'standard', spotify: 'standard' };
 var PLAYBACK_QUALITY_OPTIONS = {
   netease: [
     { key: 'jymaster', title: '超清母带', sub: 'SVIP / 最高规格', svip: true },
@@ -128,6 +131,13 @@ var PLAYBACK_QUALITY_OPTIONS = {
     { key: 'hires', title: 'Hi-Res / 臻品', sub: '酷狗高解析 / 优先尝试' },
     { key: 'lossless', title: '无损 FLAC', sub: '酷狗 SQ / 稳定优先' },
     { key: 'exhigh', title: '320k MP3', sub: '酷狗高品质' },
+    { key: 'standard', title: '128k MP3', sub: '兼容优先' }
+  ],
+  kw: [
+    { key: 'jymaster', title: '至臻母带', sub: '酷我 QMC 加密无损 / 需登录' },
+    { key: 'hires', title: 'Hi-Res FLAC', sub: '酷我高解析 / 优先尝试' },
+    { key: 'lossless', title: '无损 FLAC', sub: '酷我 SQ / 稳定优先' },
+    { key: 'exhigh', title: '320k MP3', sub: '酷我高品质' },
     { key: 'standard', title: '128k MP3', sub: '兼容优先' }
   ],
   qishui: [

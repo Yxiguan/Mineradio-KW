@@ -129,6 +129,26 @@ const {
   handleSpotifyLyric,
 } = require('./spotify-api');
 const {
+  handleKwSearch,
+  handleKwArtistSongs,
+  handleKwSongUrl,
+  handleKwLyric,
+  handleKwLyricH5,
+  handleKwPic,
+  handleKwUserPlaylists,
+  handleKwPlaylistTracks,
+  handleKwRadio,
+  handleKwRadioReport,
+  kwDoLogin,
+  kwLoginStatus,
+  kwLogout,
+  kwHasAccount,
+  kwDecrypt,
+  kwAudioHeaders,
+  KW_RADIO_CHANNELS,
+} = require('./kuwo-api');
+const kwQmc = require('./kuwo_qmc.js'); // 酷我至臻 mflac (QMCv2) 解密
+const {
   appendCuefieldFeedback,
   readCuefieldFeedbackStats,
 } = require('./cuefield/feedback-log');
@@ -145,6 +165,7 @@ const LOGIN_EASTER_EGG_PROTECTED_ROUTES = new Set([
   '/api/login/qr/check',
   '/api/qq/login/cookie',
   '/api/kugou/login/cookie',
+  '/api/kw/login',
   '/api/qishui/login/qrcode',
   '/api/qishui/login/check',
   '/api/spotify/config',
@@ -154,8 +175,7 @@ const DEFAULT_COOKIE_FILE = path.join(__dirname, '.cookie');
 const DEFAULT_QQ_COOKIE_FILE = path.join(__dirname, '.qq-cookie');
 const DEFAULT_KUGOU_COOKIE_FILE = path.join(__dirname, '.kugou-cookie');
 const DEFAULT_QISHUI_COOKIE_FILE = path.join(__dirname, '.qishui-cookie');
-const BEATMAP_CACHE_DIR = process.env.MINERADIO_BEAT_CACHE_DIR || 'D:\\MineradioCache\\beatmaps';
-const CUEFIELD_FEEDBACK_FILE = process.env.CUEFIELD_FEEDBACK_FILE || path.join(__dirname, 'data', 'cuefield-feedback.jsonl');
+const BEATMAP_CACHE_DIR = process.env.MINERADIO_BEAT_CACHE_DIR || 'D:\\MineradioCache\\beatmaps';const CUEFIELD_FEEDBACK_FILE = process.env.CUEFIELD_FEEDBACK_FILE || path.join(__dirname, 'data', 'cuefield-feedback.jsonl');
 const LISTEN_SYNC_JOURNAL_FILE = process.env.MINERADIO_LISTEN_SYNC_FILE || path.join(__dirname, 'data', 'listen-sync-journal.json');
 const LISTEN_SYNC_JOURNAL_LIMIT = 600;
 const APP_PACKAGE = readPackageInfo();
@@ -405,11 +425,13 @@ function clearAllRuntimeLoginCredentials(reason) {
   clearKugouSessionCaches();
   const qishui = clearQishuiAccessToken();
   const spotify = clearSpotifyToken();
+  const kw = kwLogout();
   return {
     ok: true,
     reason: String(reason || 'login-reset'),
     qishui: !qishui || qishui.ok !== false,
     spotify: !spotify || spotify.ok !== false,
+    kw: !kw || kw.ok !== false,
   };
 }
 
@@ -2849,6 +2871,11 @@ function audioProxyHeadersFor(audioUrl, range) {
     if (host.includes('qishui.com') || host.includes('byteimg.com') || host.includes('douyin')) headers.Referer = 'https://www.qishui.com/';
     const kugouReferer = kugouAudioReferer(audioUrl);
     if (kugouReferer) headers.Referer = kugouReferer;
+    if (host.includes('kuwo.cn') || host.includes('kwcdn.com') || host.includes('kwimgs.com')) {
+      const kwHdr = kwAudioHeaders(audioUrl);
+      headers.Referer = kwHdr.Referer;
+      headers['User-Agent'] = kwHdr['User-Agent'];
+    }
   } catch (e) {}
   if (range) headers.Range = range;
   return headers;
@@ -4700,6 +4727,12 @@ const server = http.createServer(async (req, res) => {
         albumCollect: false, commentsRead: false, commentsWrite: false,
         listenReport: false,
       },
+      kw: {
+        playlists: kwHasAccount(), likeRead: false, likeWrite: false, albumRead: false,
+        albumCollect: false, commentsRead: false, commentsWrite: false,
+        listenReport: false,
+        radio: true,
+      },
       qishui: {
         playlists: true, likeRead: true, likeWrite: qishuiCookieHasLogin(qishuiCookie),
         albumRead: false, albumCollect: qishuiCookieHasLogin(qishuiCookie),
@@ -5696,6 +5729,163 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ---------- 酷我音乐 (Kuwo) ----------
+  if (pn === '/api/kw/search') {
+    try {
+      const kw = url.searchParams.get('keywords') || '';
+      const limit = Math.max(4, Math.min(30, parseInt(url.searchParams.get('limit') || '15', 10) || 15));
+      const songs = await handleKwSearch(kw, limit);
+      sendJSON(res, { provider: 'kw', songs });
+    } catch (err) {
+      console.error('[KwSearch]', err);
+      sendJSON(res, { provider: 'kw', error: err.message, songs: [] }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/artist/songs') {
+    try {
+      const id = url.searchParams.get('id') || url.searchParams.get('artistid') || '';
+      const limit = url.searchParams.get('limit') || '';
+      sendJSON(res, await handleKwArtistSongs(id, limit));
+    } catch (err) {
+      console.error('[KwArtist]', err);
+      sendJSON(res, { provider: 'kw', error: err.message, artist: { id: '', name: '' }, songs: [] }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/song/url') {
+    try {
+      const rid = url.searchParams.get('rid') || url.searchParams.get('id') || '';
+      const quality = url.searchParams.get('quality') || '';
+      const info = await handleKwSongUrl(rid, quality);
+      sendJSON(res, info);
+    } catch (err) {
+      console.error('[KwSongUrl]', err);
+      sendJSON(res, { provider: 'kw', url: '', playable: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/lyric') {
+    try {
+      const rid = url.searchParams.get('rid') || url.searchParams.get('id') || '';
+      const name = url.searchParams.get('name') || '';
+      const artist = url.searchParams.get('artist') || '';
+      const duration = url.searchParams.get('duration') || '';
+      if (!rid && !name) { sendJSON(res, { provider: 'kw', error: 'Missing kw rid', lyric: '' }, 400); return; }
+      const data = await handleKwLyric(rid, name, artist, duration);
+      sendJSON(res, data);
+    } catch (err) {
+      console.error('[KwLyric]', err);
+      sendJSON(res, { provider: 'kw', error: err.message, lyric: '' }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/pic') {
+    try {
+      const rid = url.searchParams.get('rid') || url.searchParams.get('id') || '';
+      const data = await handleKwPic(rid);
+      sendJSON(res, data);
+    } catch (err) {
+      console.error('[KwPic]', err);
+      sendJSON(res, { provider: 'kw', cover: '', error: err.message }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/user/playlists') {
+    try {
+      const data = await handleKwUserPlaylists();
+      sendJSON(res, data);
+    } catch (err) {
+      console.error('[KwUserPlaylists]', err);
+      sendJSON(res, { provider: 'kw', loggedIn: kwHasAccount(), error: err.message, playlists: [] }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/playlist/tracks') {
+    try {
+      const id = url.searchParams.get('id') || url.searchParams.get('pid') || '';
+      const limit = parseInt(url.searchParams.get('limit') || '300', 10) || 300;
+      const offset = parseInt(url.searchParams.get('offset') || '0', 10) || 0;
+      const data = await handleKwPlaylistTracks(id, limit, offset);
+      sendJSON(res, data);
+    } catch (err) {
+      console.error('[KwPlaylistTracks]', err);
+      sendJSON(res, { provider: 'kw', error: err.message, tracks: [] }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/radio') {
+    try {
+      const fid = url.searchParams.get('fid') || url.searchParams.get('id') || '-26711';
+      const size = parseInt(url.searchParams.get('size') || '15', 10) || 15;
+      const offset = parseInt(url.searchParams.get('offset') || '0', 10) || 0;
+      sendJSON(res, await handleKwRadio(fid, size, offset));
+    } catch (err) {
+      console.error('[KwRadio]', err);
+      sendJSON(res, { provider: 'kw', error: err.message, tracks: [], offset: 0, hasMore: false }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/radio/channels') {
+    sendJSON(res, { provider: 'kw', channels: KW_RADIO_CHANNELS });
+    return;
+  }
+
+  if (pn === '/api/kw/radio/report') {
+    try {
+      const fid = url.searchParams.get('fid') || '-26711';
+      const rid = url.searchParams.get('rid') || url.searchParams.get('id') || '';
+      const taste = url.searchParams.get('taste');
+      const playtime = url.searchParams.get('playtime') || '0';
+      const duration = url.searchParams.get('duration') || '0';
+      sendJSON(res, await handleKwRadioReport(fid, rid, taste, playtime, duration));
+    } catch (err) {
+      console.error('[KwRadioReport]', err);
+      sendJSON(res, { ok: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/login/status') {
+    sendJSON(res, kwLoginStatus());
+    return;
+  }
+
+  if (pn === '/api/kw/login') {
+    try {
+      const body = await readRequestBody(req);
+      const username = String(body.username || body.account || body.user || '').trim();
+      const password = String(body.password || body.pwd || '');
+      if (!username || !password) {
+        sendJSON(res, { provider: 'kw', loggedIn: false, error: 'MISSING_CREDENTIALS', message: '请输入酷我账号和密码' }, 400);
+        return;
+      }
+      const r = await kwDoLogin(username, password);
+      if (r && r.ok) {
+        sendJSON(res, { ...kwLoginStatus(), saved: true });
+      } else {
+        sendJSON(res, { provider: 'kw', loggedIn: false, error: (r && r.error) || 'LOGIN_FAILED', message: (r && r.message) || '登录失败，请检查账号或密码' }, 401);
+      }
+    } catch (err) {
+      console.error('[KwLogin]', err);
+      sendJSON(res, { provider: 'kw', loggedIn: false, error: err.message }, 500);
+    }
+    return;
+  }
+
+  if (pn === '/api/kw/logout') {
+    sendJSON(res, kwLogout());
+    return;
+  }
+
   if (pn === '/api/qq/song/url') {
     try {
       const mid = url.searchParams.get('mid') || url.searchParams.get('id') || '';
@@ -6638,9 +6828,17 @@ const server = http.createServer(async (req, res) => {
         }
       }
       const hdr = audioProxyHeadersFor(audioUrl, range);
+      // 酷我至臻 mflac (QMCv2): 带 kwekey 则边下边解 (QMC 按绝对偏移寻址, Range 可拖动)。
+      //   解密 1:1 不改长度, Content-Length/Range 原样透传。
+      const kwekey = url.searchParams.get('kwekey') || '';
+      let qmc = null;
+      if (kwekey) {
+        try { qmc = new kwQmc.QmcCipher(kwQmc.decryptEkeyB64(kwekey, (b, k) => kwDecrypt(b, k || 'ylzsxkwm'))); }
+        catch (e) { console.error('[Audio] kwekey 解析失败:', e.message); }
+      }
       const up = await fetchWithTimeout(audioUrl, { headers: hdr }, 9000);
       const out = {
-        'Content-Type': audioContentTypeForUrl(audioUrl, up.headers.get('content-type')),
+        'Content-Type': qmc ? 'audio/flac' : audioContentTypeForUrl(audioUrl, up.headers.get('content-type')),
         'Access-Control-Allow-Origin': '*',
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
@@ -6650,6 +6848,13 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(up.status, out);
       if (!up.body) { res.end(); return; }
       const reader = up.body.getReader();
+      // 解密起始偏移 = 上游"实际发回"的起点: 仅 206 才有偏移 (上游若忽略 Range 回 200 整文件, 必须从 0 解,
+      // 否则按客户端请求的 Range 起点解会把整段解成噪声)。
+      let decOff = 0;
+      if (qmc && up.status === 206) {
+        const m = /bytes\s+(\d+)-/.exec(cr || '') || /bytes=(\d+)-/.exec(range);
+        decOff = m ? parseInt(m[1], 10) : 0;
+      }
       let clientClosed = false;
       const closeReader = () => {
         clientClosed = true;
@@ -6660,7 +6865,14 @@ const server = http.createServer(async (req, res) => {
         while (!clientClosed) {
           const c = await readStreamChunkWithTimeout(reader, 12000);
           if (c.done) break;
-          res.write(c.value);
+          if (qmc) {
+            const b = Buffer.from(c.value);
+            qmc.process(b, 0, b.length, decOff);
+            decOff += b.length;
+            res.write(b);
+          } else {
+            res.write(c.value);
+          }
         }
       } finally {
         res.removeListener('close', closeReader);
