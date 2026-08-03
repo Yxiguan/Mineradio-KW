@@ -42,23 +42,34 @@ function loadCoverFromUrl(directUrl, opts) {
   var img = new Image(); img.crossOrigin = 'anonymous'; img.decoding = 'async';
   img.onload = function () {
     if (!coverApplyStillCurrent(opts)) return;
-    var size = coverTextureSizeForResolution(fx.coverResolution);
-    var cv = document.createElement('canvas'); cv.width = cv.height = size;
-    var cx = cv.getContext('2d');
-    var iw = img.naturalWidth, ih = img.naturalHeight, s = Math.min(iw, ih);
-    cx.drawImage(img, (iw - s) / 2, (ih - s) / 2, s, s, 0, 0, size, size);
-    setAlbumBackground(proxiedUrl || directUrl);
-    applyCoverCanvas(cv, proxiedUrl || directUrl, Object.assign({}, opts, { coverKey: directUrl || proxiedUrl || '', coverSourceKind: 'url', coverSource: directUrl }));
+    var drawAndApply = function () {
+      if (!coverApplyStillCurrent(opts)) return;
+      var size = coverTextureSizeForResolution(fx.coverResolution);
+      var cv = document.createElement('canvas'); cv.width = cv.height = size;
+      var cx = cv.getContext('2d');
+      var iw = img.naturalWidth, ih = img.naturalHeight, s = Math.min(iw, ih);
+      cx.drawImage(img, (iw - s) / 2, (ih - s) / 2, s, s, 0, 0, size, size);
+      setAlbumBackground(proxiedUrl || directUrl);
+      applyCoverCanvas(cv, proxiedUrl || directUrl, Object.assign({}, opts, { coverKey: directUrl || proxiedUrl || '', coverSourceKind: 'url', coverSource: directUrl }));
+    };
+    // decoding='async' 时 onload 可能先于解码完成触发; 先 decode 再绘制, 避免空画布被传成黑纹理。
+    if (typeof img.decode === 'function') img.decode().then(drawAndApply, drawAndApply);
+    else drawAndApply();
   };
   img.onerror = function () {
     var img2 = new Image(); img2.crossOrigin = 'anonymous'; img2.decoding = 'async';
     img2.onload = function () {
       if (!coverApplyStillCurrent(opts)) return;
-      var size = coverTextureSizeForResolution(fx.coverResolution);
-      var cv = document.createElement('canvas'); cv.width = cv.height = size;
-      cv.getContext('2d').drawImage(img2, 0, 0, size, size);
-      setAlbumBackground(directUrl);
-      applyCoverCanvas(cv, directUrl, Object.assign({}, opts, { coverKey: directUrl || '', coverSourceKind: 'url', coverSource: directUrl }));
+      var drawAndApply = function () {
+        if (!coverApplyStillCurrent(opts)) return;
+        var size = coverTextureSizeForResolution(fx.coverResolution);
+        var cv = document.createElement('canvas'); cv.width = cv.height = size;
+        cv.getContext('2d').drawImage(img2, 0, 0, size, size);
+        setAlbumBackground(directUrl);
+        applyCoverCanvas(cv, directUrl, Object.assign({}, opts, { coverKey: directUrl || '', coverSourceKind: 'url', coverSource: directUrl }));
+      };
+      if (typeof img2.decode === 'function') img2.decode().then(drawAndApply, drawAndApply);
+      else drawAndApply();
     };
     img2.onerror = function () {
       if (!coverApplyStillCurrent(opts)) return;
