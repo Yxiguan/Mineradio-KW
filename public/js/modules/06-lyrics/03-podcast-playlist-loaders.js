@@ -140,10 +140,14 @@ async function hydratePlaylistQueueNextPage(reason) {
   var token = state.token;
   var source = { provider: state.provider, id: state.sourceId, requestId: state.playlistId };
   var offset = Math.max(0, Number(state.nextOffset) || playQueue.length);
-  var limit = playlistQueuePageSize(state.provider, false);
+  var limit = Number(state.pageSize) > 0 ? Number(state.pageSize) : playlistQueuePageSize(state.provider, false);
   state.loading = true;
   state.pausedForBuffer = false;
-    state.promise = fetchPlaylistTracksPage(source.provider, source.id, { offset: offset, limit: limit }, { timeoutMs: 16000 }).then(function (r) {
+  // 电台等流式来源没有 playlist/tracks 端点，自带取页器；返回结构需与歌单页一致。
+  var pageRequest = typeof state.pageFetcher === 'function'
+    ? state.pageFetcher(offset, limit, state)
+    : fetchPlaylistTracksPage(source.provider, source.id, { offset: offset, limit: limit }, { timeoutMs: 16000 });
+    state.promise = pageRequest.then(function (r) {
     if (!playlistQueueHydrationValid(state, token)) return false;
     var rawTracks = r && r.tracks || [];
     if (r && r.error && !rawTracks.length) throw new Error(r.message || r.error);

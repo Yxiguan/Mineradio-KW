@@ -221,10 +221,26 @@ function updateListenStatsTick(force) {
   if (!listenSession) return;
   tickListenSessionSnapshot(listenSession, force);
 }
+// 私人电台 type=6 口味上报：切歌/播完时把上一首的收听时长回传酷我 FM（跳过也是重要负反馈），fire-and-forget。
+function maybeReportKwRadio(session) {
+  try {
+    var ctx = session && session.context;
+    if (!ctx || ctx.type !== 'kw-radio') return;
+    var snap = session.song || {};
+    var rid = snap.id || snap.rid || '';
+    if (!rid) return;
+    var playtime = Math.max(0, Math.round(session.listenMs || 0));
+    var duration = Math.max(0, Math.round(snap.duration || 0));
+    apiJson('/api/kw/radio/report?fid=' + encodeURIComponent(ctx.fid || '-26711') +
+      '&rid=' + encodeURIComponent(rid) + '&playtime=' + playtime + '&duration=' + duration + '&t=' + Date.now())
+      .catch(function () { });
+  } catch (e) { }
+}
 function finalizeListenSession(completed) {
   if (!listenSession) return;
   var session = listenSession;
   tickListenSessionSnapshot(session, true);
+  maybeReportKwRadio(session);
   var actualDurationMs = audio && isFinite(audio.duration) && audio.duration > 0
     ? Math.round(audio.duration * 1000)
     : listenSnapshotDurationMs(session.song);

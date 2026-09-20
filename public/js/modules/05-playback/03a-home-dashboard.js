@@ -883,7 +883,7 @@ function homePlatformRecommendationFeedConfig(source) {
       playlistName: '酷狗推荐 FM',
     },
     kw: {
-      endpoint: '/api/kw/radio?fid=-26711&size=12',
+      endpoint: '/api/kw/radio?fid=-26711&size=30',
       sectionTitle: '私人电台',
       cardLabel: '酷我私人 FM',
       readyText: '来自酷我私人 FM · 猜你喜欢',
@@ -1171,14 +1171,80 @@ function playHomePlatformFeedSong(source, index) {
   currentIdx = Math.max(0, Math.min(playQueue.length - 1, Number(index) || 0));
   homeForcedOpen = false;
   homeSuppressed = false;
+  // 私人 FM 是无限流：清掉上一份歌单的续接状态，改为按 fid 流式追加，播到队尾自动补下一批。
+  if (typeof cancelPlaylistQueueHydration === 'function') cancelPlaylistQueueHydration('home-platform-feed');
+  armHomePlatformRadioHydration(source);
   if (typeof setHomeControlsLocked === 'function') setHomeControlsLocked(false);
   if (typeof safeRenderQueuePanel === 'function') safeRenderQueuePanel('home-platform-' + source, { scrollCurrent: true });
   if (typeof safeShelfRebuild === 'function') safeShelfRebuild('home-platform-' + source, true);
   if (typeof forcePlaybackControlsInteractive === 'function') forcePlaybackControlsInteractive();
   Promise.resolve(playQueueAt(currentIdx, {
     manual: true,
-    context: { type: 'home-platform-recommendation', playlistName: config.playlistName },
+    context: homePlatformFeedPlaybackContext(source, config),
   })).catch(function (error) { console.warn('[HomePlatformFeedPlay:' + source + ']', error); });
+}
+
+// 私人 FM 的队列续接：不具备 playlist/tracks 端点，用 pageFetcher 按 offset 拉下一批喂给通用续接机制。
+function homePlatformRadioFid(source) {
+  var config = homePlatformRecommendationFeedConfig(source);
+  var matched = config && /[?&]fid=([^&]+)/.exec(config.endpoint);
+  return matched ? decodeURIComponent(matched[1]) : '';
+}
+function armHomePlatformRadioHydration(source) {
+  var fid = homePlatformRadioFid(source);
+  if (!fid || typeof queueHydrationState === 'undefined' || !queueHydrationState) return false;
+  var state = queueHydrationState;
+  state.token += 1;
+  state.active = false;
+  var seen = {};
+  playQueue.forEach(function (song) { if (song && song.rid) seen[String(song.rid)] = true; });
+  state.provider = 'kw';
+  state.playlistId = 'kw-radio:' + fid;
+  state.sourceId = fid;
+  state.title = (homePlatformRecommendationFeedConfig(source) || {}).playlistName || '酷我私人 FM';
+  state.total = 0;
+  state.nextOffset = 0;
+  state.hasMore = true;
+  state.loaded = playQueue.length;
+  state.error = '';
+  state.promise = null;
+  state.timer = 0;
+  state.queueRef = playQueue;
+  state.liked = false;
+  state.warmPagesRemaining = 0;
+  state.pausedForBuffer = false;
+  state.active = true;
+  state.pageSize = 30;
+  state.pageFetcher = function (offset, limit) {
+    return apiJson('/api/kw/radio?fid=' + encodeURIComponent(fid) +
+      '&size=' + encodeURIComponent(limit || 30) +
+      '&offset=' + encodeURIComponent(offset || 0) + '&t=' + Date.now(), { timeoutMs: 16000 })
+      .then(function (data) {
+        var fresh = (data && Array.isArray(data.tracks) ? data.tracks : []).filter(function (song) {
+          var key = song && song.rid ? String(song.rid) : '';
+          if (!key || seen[key]) return false;
+          seen[key] = true;
+          return true;
+        });
+        if (data && data.error && !fresh.length) throw new Error(data.message || data.error);
+        return {
+          tracks: fresh,
+          nextOffset: Math.max(Number(data && data.offset) || 0, (Number(offset) || 0) + fresh.length),
+          hasMore: !!(data && data.hasMore) || fresh.length > 0,
+        };
+      });
+  };
+  return true;
+}
+function homePlatformFeedPlaybackContext(source, config) {
+  var context = { type: 'home-platform-recommendation', playlistName: config.playlistName };
+  var fid = homePlatformRadioFid(source);
+  if (fid) {
+    context.type = 'kw-radio';
+    context.fid = fid;
+    context.playlistName = config.playlistName;
+  }
+  return context;
 }
 
 function closeHomePlatformRecommendations() {
