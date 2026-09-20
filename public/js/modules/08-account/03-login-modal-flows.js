@@ -1,7 +1,8 @@
 var loginRefreshRequestSeq = 0;
 var loginWorkflowDrag = null;
+var kwLoginBusy = false;
 var LOGIN_WORKFLOW_CONNECTION_STORE_KEY = 'mineradio-login-workflow-connections-v1';
-var LOGIN_WORKFLOW_PROVIDERS = ['netease', 'qq', 'kugou', 'qishui', 'spotify'];
+var LOGIN_WORKFLOW_PROVIDERS = ['netease', 'qq', 'kugou', 'kw', 'qishui', 'spotify'];
 var loginWorkflowPendingProvider = '';
 var loginWorkflowVerifiedSession = {};
 var loginProviderPointer = null;
@@ -16,17 +17,18 @@ function isLoginRefreshCurrent(provider, seq) {
 }
 
 function normalizeLoginProviderKey(provider) {
-  return provider === 'qq' ? 'qq' : (provider === 'kugou' ? 'kugou' : (provider === 'qishui' ? 'qishui' : (provider === 'spotify' ? 'spotify' : 'netease')));
+  return provider === 'qq' ? 'qq' : (provider === 'kugou' ? 'kugou' : (provider === 'kw' || provider === 'kuwo' ? 'kw' : (provider === 'qishui' ? 'qishui' : (provider === 'spotify' ? 'spotify' : 'netease'))));
 }
 function loginProviderSupportsCookieMode(provider) {
   provider = normalizeLoginProviderKey(provider);
-  return provider !== 'spotify' && provider !== 'qishui';
+  return provider !== 'spotify' && provider !== 'qishui' && provider !== 'kw';
 }
 function loginProviderOfficialModeText(provider) {
   provider = normalizeLoginProviderKey(provider);
   if (provider === 'spotify') return { title: 'OAuth', sub: '弹出 Spotify 授权窗口' };
   if (provider === 'qishui') return { title: '扫码', sub: '使用抖音 App 官方授权' };
   if (provider === 'kugou') return { title: '官网', sub: '弹出酷狗官方窗口' };
+  if (provider === 'kw') return { title: '账号', sub: '填写酷我手机号与密码' };
   return { title: '扫码', sub: '连接后弹出官方窗口' };
 }
 function setManualCookieOpenForProvider(provider, open) {
@@ -779,6 +781,39 @@ function updateLoginProviderUi() {
     updateLoginNodeGraphUi();
     return;
   }
+  if (loginProvider === 'kw') {
+    var kwBtn = document.getElementById('login-provider-kw');
+    if (neteaseBtn) neteaseBtn.classList.toggle('active', false);
+    if (qqBtn) qqBtn.classList.toggle('active', false);
+    if (kugouBtn) kugouBtn.classList.toggle('active', false);
+    if (kwBtn) kwBtn.classList.toggle('active', true);
+    if (qishuiBtn) qishuiBtn.classList.toggle('active', false);
+    if (spotifyBtn) spotifyBtn.classList.toggle('active', false);
+    if (title) title.textContent = '登录酷我音乐';
+    if (desc) desc.innerHTML = '填写 <b>酷我音乐账号（手机号）</b>与密码登录，可用于至臻音质、歌单与个性化私人 FM。';
+    var kwPanel = document.getElementById('kw-login-panel');
+    if (qqPanel) qqPanel.classList.remove('show', 'spotify-guide-panel');
+    if (kwPanel) kwPanel.classList.add('show');
+    if (qqCookieToggle) qqCookieToggle.classList.remove('show');
+    if (qqCookieSaveBtn) qqCookieSaveBtn.textContent = '登录';
+    if (qqCard) {
+      qqCard.style.display = 'none';
+      qqCard.disabled = true;
+    }
+    if (st) {
+      st.className = 'preview';
+      st.textContent = kuwoLoginStatus.loggedIn
+        ? ('已登录酷我: ' + (kuwoLoginStatus.nickname || kuwoLoginStatus.userId || ''))
+        : (kuwoLoginStatus.hasAccount ? '已保存酷我账号，点击“登录”刷新会话' : '填写账号密码后点击登录');
+    }
+    if (refreshBtn) {
+      refreshBtn.disabled = !!kwLoginBusy;
+      refreshBtn.textContent = kwLoginBusy ? '登录中…' : (kuwoLoginStatus.loggedIn ? '刷新状态' : '登录');
+      refreshBtn.onclick = submitKwLogin;
+    }
+    updateLoginNodeGraphUi();
+    return;
+  }
   if (qqPanel) qqPanel.classList.remove('spotify-guide-panel');
   if (spotifyBtn) spotifyBtn.classList.toggle('active', false);
   if (neteaseBtn) neteaseBtn.classList.toggle('active', loginProvider === 'netease');
@@ -1393,6 +1428,47 @@ async function submitNeteaseCookieLogin() {
     if (statusEl) { statusEl.textContent = e && e.message ? e.message : '网易云会话保存失败'; statusEl.className = 'fail'; }
   } finally {
     qqCookieBusy = false;
+    if (saveBtn) saveBtn.classList.remove('busy');
+    updateLoginProviderUi();
+  }
+}
+async function submitKwLogin() {
+  if (kwLoginBusy) return;
+  var statusEl = document.getElementById('qr-status');
+  var saveBtn = document.getElementById('kw-login-save-btn') || document.getElementById('qq-cookie-save-btn');
+  var usernameInput = document.getElementById('kw-login-username');
+  var passwordInput = document.getElementById('kw-login-password');
+  var username = usernameInput ? usernameInput.value.trim() : '';
+  var password = passwordInput ? passwordInput.value : '';
+  if (!username || !password) {
+    if (statusEl) { statusEl.textContent = '请输入酷我账号和密码'; statusEl.className = 'fail'; }
+    return;
+  }
+  kwLoginBusy = true;
+  if (saveBtn) saveBtn.classList.add('busy');
+  if (statusEl) { statusEl.textContent = '正在登录酷我…'; statusEl.className = 'preview'; }
+  try {
+    var info = await apiJson('/api/kw/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username, password: password })
+    });
+    if (!info || !info.loggedIn) throw new Error((info && (info.message || info.error)) || '酷我登录失败');
+    kuwoLoginStatus = normalizeKuwoLoginStatus(info);
+    activeAccountProvider = 'kw';
+    if (passwordInput) passwordInput.value = '';
+    renderUserBtn();
+    refreshUserPlaylists(true);
+    if (typeof loadHomeDiscover === 'function') loadHomeDiscover(true);
+    if (statusEl) { statusEl.textContent = '酷我音乐已登录: ' + (info.nickname || info.userId || ''); statusEl.className = 'scan'; }
+    setTimeout(function () {
+      closeLoginModal();
+      showToast('酷我音乐已登录: ' + (info.nickname || info.userId || ''));
+    }, 420);
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = e && e.message ? e.message : '酷我登录失败'; statusEl.className = 'fail'; }
+  } finally {
+    kwLoginBusy = false;
     if (saveBtn) saveBtn.classList.remove('busy');
     updateLoginProviderUi();
   }

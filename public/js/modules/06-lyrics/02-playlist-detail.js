@@ -540,9 +540,9 @@ function playlistPanelBuildVirtualEntries() {
   if (playlistPanelVirtualCache.revision === playlistCatalogRevision &&
       playlistPanelVirtualCache.detailKey === playlistPanelDetailState.key &&
       playlistPanelVirtualCache.detailSig === detailSig) return playlistPanelVirtualCache;
-  var labels = { netease: '网易云歌单', qq: 'QQ 音乐歌单', kugou: '酷狗音乐歌单', qishui: '汽水音乐歌单', spotify: 'Spotify 歌单' };
-  var order = ['netease', 'qq', 'kugou', 'qishui', 'spotify'];
-  var groups = { netease: [], qq: [], kugou: [], qishui: [], spotify: [] };
+  var labels = { netease: '网易云歌单', qq: 'QQ 音乐歌单', kugou: '酷狗音乐歌单', kw: '酷我音乐歌单', qishui: '汽水音乐歌单', spotify: 'Spotify 歌单' };
+  var order = ['netease', 'qq', 'kugou', 'kw', 'qishui', 'spotify'];
+  var groups = { netease: [], qq: [], kugou: [], kw: [], qishui: [], spotify: [] };
   userPlaylists.forEach(function (pl, sourceIndex) {
     var key = playlistPanelGroupKey(pl);
     if (!groups[key]) groups[key] = [];

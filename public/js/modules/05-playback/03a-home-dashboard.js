@@ -29,6 +29,7 @@ var homePlatformRecommendationState = {
   feeds: {
     qishui: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
     kugou: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
+    kw: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
     spotify: { loading: false, loaded: false, songs: [], error: '', message: '', mode: '', source: '', fallback: false, provenance: '' },
   },
 };
@@ -862,6 +863,7 @@ function homePlatformRecommendationSourceLabel(source) {
     qishui: '汽水',
     qq: 'QQ 音乐',
     kugou: '酷狗音乐',
+    kw: '酷我音乐',
     spotify: 'Spotify',
   }[source] || '当前平台';
 }
@@ -881,6 +883,13 @@ function homePlatformRecommendationFeedConfig(source) {
       cardLabel: '酷狗推荐 FM',
       readyText: '来自酷狗 FM 推荐',
       playlistName: '酷狗推荐 FM',
+    },
+    kw: {
+      endpoint: '/api/kw/radio?fid=-26711&size=12',
+      sectionTitle: '私人电台',
+      cardLabel: '酷我私人 FM',
+      readyText: '来自酷我私人 FM · 猜你喜欢',
+      playlistName: '酷我私人 FM',
     },
     spotify: {
       endpoint: '/api/spotify/recommendations?limit=12',
@@ -1216,7 +1225,7 @@ function bindHomePlatformRecommendationControls() {
     closeHomePlatformRecommendations();
     if (kind === 'netease-playlist' && typeof openHomePlaylist === 'function') openHomePlaylist(index);
     else if (kind === 'netease-song' && typeof playHomeSong === 'function') playHomeSong(index);
-    else if (/^(qishui|kugou|spotify)-song$/.test(kind)) playHomePlatformFeedSong(kind.replace(/-song$/, ''), index);
+    else if (/^(qishui|kugou|kw|spotify)-song$/.test(kind)) playHomePlatformFeedSong(kind.replace(/-song$/, ''), index);
   });
   if (list) list.addEventListener('scroll', scheduleHomePlatformDailyWindowRender, { passive: true });
   window.addEventListener('resize', scheduleHomePlatformDailyWindowRender, { passive: true });
