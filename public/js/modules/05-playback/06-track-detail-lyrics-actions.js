@@ -14,6 +14,7 @@ function songSourceLabel(song) {
   if (song.provider === 'qq' || song.source === 'qq' || song.type === 'qq') return 'QQ 音乐';
   if (song.provider === 'qishui' || song.source === 'qishui' || song.type === 'qishui') return '汽水音乐';
   if (song.provider === 'kugou' || song.source === 'kugou' || song.type === 'kugou' || song.hash || song.audioHash) return '酷狗音乐';
+  if (song.provider === 'kw' || song.source === 'kw' || song.type === 'kw' || song.provider === 'kuwo' || song.source === 'kuwo' || song.type === 'kuwo' || song.rid) return '酷我音乐';
   if (song.type === 'local') return '本地上传';
   if (song.type === 'podcast' || song.source === 'podcast') return '网易云播客';
   return '网易云音乐';
