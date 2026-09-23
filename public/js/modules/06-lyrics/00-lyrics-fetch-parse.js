@@ -159,11 +159,35 @@ function lyricTranslationFallbackKey(song) {
     simpleSearchNorm(song.album || '')
   ].join('|');
 }
+// 双语歌词特征：正文里大量行与另一行时间戳几乎相同（原文行 + 内嵌翻译行成对，如酷我 lrcx 的日/中交替）。
+// 这种歌词自带翻译，不应再向网易云回退拉第二份译本，否则同句会先后出现两个不同翻译。
+function lyricLinesLookSelfTranslated(lines) {
+  if (!Array.isArray(lines) || lines.length < 8) return false;
+  var buckets = {};
+  var paired = 0;
+  var total = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line || !String(line.text || '').trim() || line.fallback) continue;
+    if (typeof isLyricCreditLineText === 'function' && isLyricCreditLineText(line.text)) continue;
+    total += 1;
+    var key = Math.round((Number(line.t) || 0) * 10);
+    if (buckets[key]) {
+      paired += 1;
+      buckets[key] += 1;
+    } else {
+      buckets[key] = 1;
+    }
+  }
+  if (total < 8) return false;
+  return paired >= Math.max(4, Math.floor(total * 0.35));
+}
 function shouldFetchNeteaseLyricTranslationFallback(song, state) {
   if (!song || !state || !state.usableLyric) return false;
   if (song.type === 'local' || song.source === 'local' || song.localUrl || song.type === 'podcast') return false;
   if (songProviderKey(song) === 'netease') return false;
   if (state.translationLines && state.translationLines.length) return false;
+  if (lyricLinesLookSelfTranslated(state.lines)) return false;
   if (!String(song.name || song.title || '').trim()) return false;
   var key = lyricTranslationFallbackKey(song);
   var missedAt = lyricTranslationFallbackMissCache[key] || 0;
@@ -201,6 +225,7 @@ async function findNeteaseLyricFallbackCandidate(song) {
 function mergeNeteaseFallbackTranslationsIntoCurrent(song, token, payload, cacheKey) {
   if (!payload || !payload.lines || !payload.lines.length) return false;
   if (token !== trackSwitchToken) return false;
+  if (originalLyricsState && lyricLinesLookSelfTranslated(originalLyricsState.lines)) return false;
   var currentSong = typeof currentLyricSong === 'function' ? currentLyricSong() : null;
   if (lyricTranslationFallbackKey(currentSong) !== cacheKey) return false;
   if (originalLyricsState && originalLyricsState.translationLines && originalLyricsState.translationLines.length) return false;
