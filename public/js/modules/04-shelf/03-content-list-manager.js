@@ -252,6 +252,9 @@ function makeContentListManager() {
     if (contentSource.provider === 'kugou') {
       return '/api/kugou/playlist/tracks?id=' + encodeURIComponent(contentSource.id) + '&limit=' + limit + '&offset=' + Math.max(0, offset || 0);
     }
+    if (contentSource.provider === 'kw') {
+      return '/api/kw/playlist/tracks?id=' + encodeURIComponent(contentSource.id) + '&limit=' + limit + '&offset=' + Math.max(0, offset || 0);
+    }
     if (contentSource.provider === 'qishui') {
       return '/api/qishui/playlist/tracks?id=' + encodeURIComponent(contentSource.id) + '&limit=' + limit + '&offset=' + Math.max(0, offset || 0);
     }
@@ -704,13 +707,14 @@ function makeContentListManager() {
       var podcastCollectionKey = String(playlistId || '').indexOf('podcast:') === 0 ? String(playlistId).slice(8) : '';
       var qqPlaylistId = String(playlistId || '').indexOf('qq:') === 0 ? String(playlistId).slice(3) : '';
       var kugouPlaylistId = String(playlistId || '').indexOf('kugou:') === 0 ? String(playlistId).slice(6) : '';
+      var kwPlaylistId = String(playlistId || '').indexOf('kw:') === 0 ? String(playlistId).slice(3) : '';
       var qishuiPlaylistId = String(playlistId || '').indexOf('qishui:') === 0 ? String(playlistId).slice(7) : '';
       var spotifyPlaylistId = String(playlistId || '').indexOf('spotify:') === 0 ? String(playlistId).slice(8) : '';
       var builtInPlaylistId = String(playlistId || '').indexOf('mineradio:') === 0 ? String(playlistId).slice(10) : '';
       contentKind = podcastCollectionKey ? 'podcast' : 'playlist';
       contentSource = podcastCollectionKey ? null : {
-        provider: builtInPlaylistId ? 'mineradio' : (qqPlaylistId ? 'qq' : (kugouPlaylistId ? 'kugou' : (qishuiPlaylistId ? 'qishui' : (spotifyPlaylistId ? 'spotify' : 'netease')))),
-        id: builtInPlaylistId || qqPlaylistId || kugouPlaylistId || qishuiPlaylistId || spotifyPlaylistId || playlistId
+        provider: builtInPlaylistId ? 'mineradio' : (qqPlaylistId ? 'qq' : (kugouPlaylistId ? 'kugou' : (kwPlaylistId ? 'kw' : (qishuiPlaylistId ? 'qishui' : (spotifyPlaylistId ? 'spotify' : 'netease'))))),
+        id: builtInPlaylistId || qqPlaylistId || kugouPlaylistId || kwPlaylistId || qishuiPlaylistId || spotifyPlaylistId || playlistId
       };
       // 拉取歌单/播客集合
       var r = null;

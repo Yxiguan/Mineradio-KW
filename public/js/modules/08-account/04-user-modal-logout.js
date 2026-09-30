@@ -110,7 +110,7 @@ function requestDualLoginMode() {
   enableDualAccountView();
 }
 function openProviderLogin(provider) {
-  provider = provider === 'qq' ? 'qq' : (provider === 'kugou' ? 'kugou' : (provider === 'qishui' ? 'qishui' : (provider === 'spotify' ? 'spotify' : 'netease')));
+  provider = provider === 'qq' ? 'qq' : (provider === 'kugou' ? 'kugou' : (provider === 'kw' || provider === 'kuwo' ? 'kw' : (provider === 'qishui' ? 'qishui' : (provider === 'spotify' ? 'spotify' : 'netease'))));
   closeUserModal();
   loginProvider = provider;
   showLoginModal({ provider: provider });
@@ -273,6 +273,7 @@ async function logoutActiveAccount() {
   if (activeAccountProvider === 'kw') {
     try { await apiJson('/api/kw/logout'); } catch (e) { }
     kuwoLoginStatus = { provider: 'kw', loggedIn: false, configured: false, preview: false, nickname: '酷我音乐', userId: '', avatar: '', vipType: 0, vipLevel: 'none', isVip: false, isSvip: false, hasAccount: false };
+    if (typeof clearPlaybackQualityRuntimeCaps === 'function') clearPlaybackQualityRuntimeCaps('kw');
     kwPlaylists = [];
     userPlaylists = userPlaylists.filter(function (pl) { return pl.provider !== 'kw'; });
     playlistCatalogRevision += 1;

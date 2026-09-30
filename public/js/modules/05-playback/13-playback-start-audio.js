@@ -609,7 +609,7 @@ async function resolveAlbumGaplessPlaybackData(song) {
   var requestedQuality = normalizePlaybackQualityForProvider(getProviderPlaybackQuality(playbackProvider), playbackProvider);
   if (playbackProvider === 'netease' && requestedQuality === 'jymaster' && !hasProviderSvip('netease', loginStatus)) requestedQuality = 'hires';
   var runtimeQualityCap = playbackQualityCapValue(song, playbackProvider);
-  if (playbackQualityAboveCap(requestedQuality, playbackProvider, runtimeQualityCap)) requestedQuality = runtimeQualityCap;
+  if (playbackQualityCapBlocksTier(song, playbackProvider, requestedQuality)) requestedQuality = runtimeQualityCap;
   var qualityParam = '&quality=' + encodeURIComponent(requestedQuality);
   if (playbackProvider === 'qq') {
     return apiJson('/api/qq/song/url?mid=' + encodeURIComponent(song.mid || song.songmid || song.id || '') + '&mediaMid=' + encodeURIComponent(song.mediaMid || song.media_mid || '') + qqPlaybackEvidenceQuery(song) + qualityParam, { timeoutMs: 15000 });
@@ -1170,7 +1170,7 @@ async function playQueueAt(idx, opts) {
       var requestedQuality = normalizePlaybackQualityForProvider(opts.qualityOverride || getProviderPlaybackQuality(playbackProvider), playbackProvider);
       if (playbackProvider === 'netease' && requestedQuality === 'jymaster' && !hasProviderSvip('netease', loginStatus)) requestedQuality = 'hires';
       var runtimeQualityCap = playbackQualityCapValue(song, playbackProvider);
-      if (playbackQualityAboveCap(requestedQuality, playbackProvider, runtimeQualityCap)) {
+      if (playbackQualityCapBlocksTier(song, playbackProvider, requestedQuality)) {
         requestedQuality = runtimeQualityCap;
       }
       var qualityParam = '&quality=' + encodeURIComponent(requestedQuality);
@@ -1248,7 +1248,7 @@ async function playQueueAt(idx, opts) {
       }
       var resolvedQualityText = playbackResolvedQualityText(data, playbackProvider);
       var qualityDowngraded = !!(data && data.level && playbackQualityWasDowngraded(requestedQuality, data.level, playbackProvider));
-      if (qualityDowngraded) markPlaybackQualityRuntimeCap(song, playbackProvider, data.level, 'resolved-lower');
+      if (qualityDowngraded) markPlaybackQualityRuntimeCap(song, playbackProvider, data.level, 'resolved-lower', requestedQuality);
       if (!opts.startupAutoplay && !isQQPlayback && qualityDowngraded) {
         showSourceFallbackNotice((isKugouPlayback ? '酷狗' : (isKuwoPlayback ? '酷我' : (isQishuiPlayback ? '汽水' : '网易云'))) + '音质自动降级', '请求 ' + playbackQualityLabel(requestedQuality, playbackProvider) + '，实际播放 ' + resolvedQualityText + '。');
       } else if (!opts.startupAutoplay && opts.qualitySwitch) {

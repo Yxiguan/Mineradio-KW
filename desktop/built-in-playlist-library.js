@@ -8,14 +8,14 @@ const MAX_PLAYLISTS = 100;
 const MAX_TRACKS_PER_PLAYLIST = 5000;
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const MAX_TRACK_BYTES = 48 * 1024;
-const ALLOWED_PROVIDERS = new Set(['netease', 'qq', 'kugou', 'qishui', 'local']);
+const ALLOWED_PROVIDERS = new Set(['netease', 'qq', 'kugou', 'kw', 'qishui', 'local']);
 
 const TRACK_FIELDS = [
   'provider', 'source', 'type', 'id', 'providerSongId', 'provider_song_id', 'trackId', 'track_id',
   'mid', 'songmid', 'mediaMid', 'media_mid', 'qqId',
   'hash', 'fileHash', 'audioHash', 'albumId', 'album_id', 'albumMid', 'albummid',
   'albumAudioId', 'album_audio_id', 'mixSongId', 'mix_song_id', 'hqHash', 'hq_hash',
-  'sqHash', 'sq_hash', 'resHash', 'res_hash',
+  'sqHash', 'sq_hash', 'resHash', 'res_hash', 'rid', 'formats', 'hasFlac',
   'name', 'title', 'artist', 'album', 'cover', 'duration', 'durationMs', 'dt',
   'fee', 'Fee', 'playable', 'playbackMode', 'recommendationSource',
   'localKey', 'localFileId', 'localUrl', 'localPath', 'localMissing', 'hasLyric', 'lyricSource',
@@ -33,6 +33,7 @@ function normalizeProvider(song) {
   if (source === 'spotify' || song && (song.spotifyId || song.spotifyUri)) return 'unsupported';
   if (source === 'local' || song && (song.localFileId || song.localKey || song.localUrl)) return 'local';
   if (source === 'qq') return 'qq';
+  if (source === 'kw' || source === 'kuwo') return 'kw';
   if (source === 'kugou' || song && (song.hash || song.fileHash || song.audioHash)) return 'kugou';
   if (source === 'qishui') return 'qishui';
   return 'netease';
@@ -64,6 +65,7 @@ function trackIdentity(track) {
   if (provider === 'local') value = track.localFileId || track.localKey || String(track.id || '').replace(/^local:/, '');
   else if (provider === 'qq') value = track.mid || track.songmid || track.id;
   else if (provider === 'kugou') value = track.hash || track.fileHash || track.audioHash || track.id;
+  else if (provider === 'kw') value = track.id || track.rid;
   else if (provider === 'qishui') value = track.id || track.providerSongId || track.trackId || track.track_id;
   else value = track.id;
   value = cleanText(value, '', 512);

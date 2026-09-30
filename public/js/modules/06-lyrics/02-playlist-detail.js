@@ -116,19 +116,20 @@ function bindMiniQueueLazyRender() {
 }
 function normalizePlaylistProvider(provider) {
   if (provider === 'mineradio') return 'mineradio';
+  if (provider === 'kw' || provider === 'kuwo') return 'kw';
   if (provider === 'qq' || provider === 'kugou' || provider === 'qishui' || provider === 'spotify') return provider;
   return 'netease';
 }
 function playlistProviderLabel(provider) {
   provider = normalizePlaylistProvider(provider);
   if (provider === 'mineradio') return 'MR';
-  return provider === 'qq' ? 'QQ' : (provider === 'kugou' ? 'KG' : (provider === 'qishui' ? 'QS' : (provider === 'spotify' ? 'SP' : 'NE')));
+  return provider === 'qq' ? 'QQ' : (provider === 'kugou' ? 'KG' : (provider === 'kw' ? 'KW' : (provider === 'qishui' ? 'QS' : (provider === 'spotify' ? 'SP' : 'NE'))));
 }
 function playlistProviderName(provider) {
   provider = normalizePlaylistProvider(provider);
   if (provider === 'mineradio') return 'Mineradio 内置歌单';
   if (provider === 'spotify') return 'Spotify';
-  return provider === 'qq' ? 'QQ 音乐' : (provider === 'kugou' ? '酷狗音乐' : (provider === 'qishui' ? '汽水音乐' : '网易云音乐'));
+  return provider === 'qq' ? 'QQ 音乐' : (provider === 'kugou' ? '酷狗音乐' : (provider === 'kw' ? '酷我音乐' : (provider === 'qishui' ? '汽水音乐' : '网易云音乐')));
 }
 function playlistPanelKey(provider, id) {
   provider = normalizePlaylistProvider(provider);
@@ -139,6 +140,7 @@ function playlistPanelProviderId(provider, id) {
   if (provider === 'mineradio') return 'mineradio:' + id;
   if (provider === 'qq') return 'qq:' + id;
   if (provider === 'kugou') return 'kugou:' + id;
+  if (provider === 'kw') return 'kw:' + id;
   if (provider === 'qishui') return 'qishui:' + id;
   if (provider === 'spotify') return 'spotify:' + id;
   return id;
@@ -269,6 +271,7 @@ function playlistTracksEndpoint(provider, id, params) {
     });
   }
   if (provider === 'qq') return '/api/qq/playlist/tracks?' + query;
+  if (provider === 'kw') return '/api/kw/playlist/tracks?' + query;
   if (provider === 'kugou') return '/api/kugou/playlist/tracks?' + query;
   if (provider === 'qishui') return '/api/qishui/playlist/tracks?' + query;
   if (provider === 'spotify') return '/api/spotify/playlist/tracks?' + query;

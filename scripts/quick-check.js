@@ -150,6 +150,21 @@ function runBuiltInPlaylistRegressionCheck() {
   process.stdout.write(result.stdout || '');
 }
 
+function runKuwoProviderIntegrationCheck() {
+  logStep('Kuwo provider integration regression');
+  const testFile = path.join(appRoot, 'tests', 'kuwo-integration.test.js');
+  const result = spawnSync(process.execPath, ['--test', testFile], {
+    cwd: appRoot,
+    encoding: 'utf8'
+  });
+  if (result.status !== 0) {
+    process.stdout.write(result.stdout || '');
+    process.stderr.write(result.stderr || '');
+    fail(`Kuwo provider integration regression failed: ${rel(testFile)}`);
+  }
+  process.stdout.write(result.stdout || '');
+}
+
 function runWallpaperEngineIdleDisposeRegressionCheck() {
   logStep('Wallpaper Engine idle-dispose regression');
   const testFile = path.join(appRoot, 'tests', 'wallpaper-engine-idle-dispose.test.js');
@@ -1741,7 +1756,7 @@ function checkQishuiProviderGuard() {
   if (!/\/api\/qishui\/user\/playlists/.test(serverText) || !/\/api\/qishui\/playlist\/tracks/.test(serverText)) {
     fail('server.js must route Qishui user playlists and playlist track detail endpoints');
   }
-  if (!/qishuiPlaylists/.test(coreStoreText) || !/if \(provider === 'qishui'\) return '\/api\/qishui\/user\/playlists'/.test(playlistShellText) || !/builtInPlaylists\.concat\(neteasePlaylists, qqPlaylists, kugouPlaylists, qishuiPlaylists, spotifyPlaylists\)/.test(playlistShellText)) {
+  if (!/qishuiPlaylists/.test(coreStoreText) || !/if \(provider === 'qishui'\) return '\/api\/qishui\/user\/playlists'/.test(playlistShellText) || !/builtInPlaylists\.concat\(neteasePlaylists, qqPlaylists, kugouPlaylists, (?:kwPlaylists, )?qishuiPlaylists, spotifyPlaylists\)/.test(playlistShellText)) {
     fail('playlist panel refresh must merge Qishui playlists with the other providers');
   }
   if (!/normalizePlaylistProvider/.test(playlistDetailText) || !/\/api\/qishui\/playlist\/tracks/.test(playlistDetailText) || !/qishui:' \+ id/.test(playlistDetailText) || !/汽水音乐歌单/.test(playlistDetailText)) {
@@ -2437,7 +2452,7 @@ function checkSearchGlassEntranceGuard() {
     /Promise\.allSettled\(fetchProviders\.map\(function\s*\(provider\)/.test(searchText) &&
     /function loadNextMusicSearchPage\(expectedKey\)/.test(searchText) &&
     /new IntersectionObserver/.test(searchText) &&
-    /mergeSongSearchResults\(neteaseSongs,\s*qqSongs,\s*kugouSongs,\s*qishuiSongs,\s*spotifySongs/.test(searchText);
+    /mergeSongSearchResults\(neteaseSongs,\s*qqSongs,\s*kugouSongs,\s*(?:kwSongs,\s*)?qishuiSongs,\s*spotifySongs/.test(searchText);
   const searchFusionRankingOk =
     /function searchPopularityScore\(song,\s*sourceIndex\)/.test(searchText) &&
     /function searchCanonicalSongKey\(song\)/.test(searchText) &&
@@ -5631,6 +5646,7 @@ async function main() {
   runPlaybackSingleRepeatLoopRegressionCheck();
   runLocalMusicLibraryRegressionCheck();
   runBuiltInPlaylistRegressionCheck();
+  runKuwoProviderIntegrationCheck();
   runWallpaperEngineIdleDisposeRegressionCheck();
   runWallpaperEngineMinimizeResidentRegressionCheck();
   runWallpaperEngineWin10YellowBorderRegressionCheck();

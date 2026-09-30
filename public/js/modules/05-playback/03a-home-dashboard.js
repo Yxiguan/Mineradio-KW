@@ -1311,8 +1311,8 @@ function openHomePlatformRecommendations(preferredSource) {
     ? 'netease'
     : (qishuiLoginStatus && (qishuiLoginStatus.loggedIn || qishuiLoginStatus.configured)
       ? 'qishui'
-      : (kugouLoginStatus && kugouLoginStatus.loggedIn ? 'kugou' : 'netease'));
-  var source = /^(netease|qishui|qq|kugou)$/.test(String(preferredSource || '')) ? preferredSource : defaultSource;
+      : (kugouLoginStatus && kugouLoginStatus.loggedIn ? 'kugou' : (kuwoLoginStatus && kuwoLoginStatus.loggedIn ? 'kw' : 'netease')));
+  var source = /^(netease|qishui|qq|kugou|kw)$/.test(String(preferredSource || '')) ? preferredSource : defaultSource;
   loadHomePlatformRecommendations(source, false);
   setTimeout(function () {
     var activeTab = mask.querySelector('[data-home-recommend-source="' + source + '"]');

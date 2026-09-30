@@ -388,7 +388,7 @@ async function fetchBeatPrefetchAudioUrl(song) {
   var requestedQuality = normalizePlaybackQualityForProvider(getPlaybackQualityForSong(song), isQQ ? 'qq' : 'netease');
   if (!isQQ && requestedQuality === 'jymaster' && !hasProviderSvip('netease', loginStatus)) requestedQuality = 'hires';
   var runtimeQualityCap = playbackQualityCapValue(song, isQQ ? 'qq' : 'netease');
-  if (playbackQualityAboveCap(requestedQuality, isQQ ? 'qq' : 'netease', runtimeQualityCap)) requestedQuality = runtimeQualityCap;
+  if (playbackQualityCapBlocksTier(song, isQQ ? 'qq' : 'netease', requestedQuality)) requestedQuality = runtimeQualityCap;
   var qualityParam = '&quality=' + encodeURIComponent(requestedQuality);
   var neteaseMatchQuery = typeof neteasePlaybackMatchQuery === 'function' ? neteasePlaybackMatchQuery(song) : '';
   var data = isQQ

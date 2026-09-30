@@ -202,7 +202,7 @@ async function retryQQPlaybackWithCompatibleQuality(song, idx, token, opts, data
   if (!candidates.length || token !== trackSwitchToken) return false;
   var nextQuality = candidates[0];
   var resolvedQuality = normalizePlaybackQuality(data && data.level);
-  markPlaybackQualityRuntimeCap(song, 'qq', nextQuality, 'qq-url-unavailable');
+  markPlaybackQualityRuntimeCap(song, 'qq', nextQuality, 'qq-url-unavailable', requestedQuality);
   if (!opts.startupAutoplay) showSourceFallbackNotice('QQ 音质自动兼容', '当前音质启动失败，正在切到 ' + playbackQualityLabel(nextQuality, 'qq') + '。');
   var retryResumeAt = opts.resumeAt;
   if (retryResumeAt == null && opts.startupAutoplay && pendingPlaybackResumeAt > 0) retryResumeAt = pendingPlaybackResumeAt;

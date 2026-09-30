@@ -433,6 +433,8 @@ async function refreshKuwoLoginStatus() {
       showToast('酷我音乐登录状态可能已失效');
     }
     kuwoLoginWasLoggedIn = !!kuwoLoginStatus.loggedIn;
+    // 登录态变化后, 之前(未登录时)探测出的音质上限不再可信 —— 清掉重探, 否则至臻会一直灰着。
+    if (prevLogged !== !!kuwoLoginStatus.loggedIn && typeof clearPlaybackQualityRuntimeCaps === 'function') clearPlaybackQualityRuntimeCaps('kw');
     if (!hasPlatformLogin(activeAccountProvider)) activeAccountProvider = firstLoggedProvider();
     renderUserBtn();
     return kuwoLoginStatus;

@@ -1241,6 +1241,7 @@ function songAccountLoginStatus(provider) {
   if (provider === 'spotify') return spotifyLoginStatus || {};
   if (provider === 'qishui') return qishuiLoginStatus || {};
   if (provider === 'kugou') return kugouLoginStatus || {};
+  if (provider === 'kw') return kuwoLoginStatus || {};
   if (provider === 'qq') return qqLoginStatus || {};
   return loginStatus || {};
 }

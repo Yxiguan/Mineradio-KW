@@ -1629,6 +1629,7 @@ async function submitKwLogin() {
     });
     if (!info || !info.loggedIn) throw new Error((info && (info.message || info.error)) || '酷我登录失败');
     kuwoLoginStatus = normalizeKuwoLoginStatus(info);
+    if (typeof clearPlaybackQualityRuntimeCaps === 'function') clearPlaybackQualityRuntimeCaps('kw');
     activeAccountProvider = 'kw';
     if (passwordInput) passwordInput.value = '';
     renderUserBtn();

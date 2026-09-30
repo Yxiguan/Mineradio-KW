@@ -20,7 +20,7 @@ async function apiJson(url, opts) {
 function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function normalizePlaybackQuality(value) {
   value = String(value || '').toLowerCase();
-  if (value === 'jymaster' || value === 'master' || value === 'svip') return 'jymaster';
+  if (value === 'jymaster' || value === 'master' || value === 'svip' || value === 'zhizhen' || value === 'zply') return 'jymaster';
   if (value === 'hires' || value === 'hi-res' || value === 'highres' || value === 'highest') return 'hires';
   if (value === 'lossless' || value === 'flac' || value === 'sq') return 'lossless';
   if (value === 'exhigh' || value === 'high' || value === '320k' || value === 'hq') return 'exhigh';
@@ -167,23 +167,63 @@ function playbackQualityAboveCap(value, provider, capValue) {
   capValue = normalizePlaybackQualityForProvider(capValue, provider);
   return playbackQualityRank(value, provider) > playbackQualityRank(capValue, provider);
 }
+// 请求 T 落到 R 只证明 (R, T] 这段档位不可用; T 以上的档位本次并未探测, 不能连坐。
+// 典型: 酷我 Hi-Res(4000kflac) 回退到无损, 不能因此把走独立取链的至臻(ZPLY)也锁掉。
+function playbackQualityCapBlocksTier(song, provider, value) {
+  var cap = playbackQualityRuntimeCapForSong(song, provider);
+  if (!cap || !cap.ceiling) return false;
+  var rank = playbackQualityRank(value, provider);
+  if (rank <= playbackQualityRank(cap.ceiling, provider)) return false;
+  return rank <= playbackQualityRank(cap.requested || cap.ceiling, provider);
+}
+// 上限被区间化后, 「当前歌曲最高」不能再用 ceiling 直接当答案 —— 取真正未被锁的最高档。
+function playbackQualityHighestAllowedTier(song, provider) {
+  var options = playbackQualityOptions(provider);
+  for (var i = 0; i < options.length; i++) {
+    if (!playbackQualityCapBlocksTier(song, provider, options[i].key)) return options[i].key;
+  }
+  return '';
+}
+function clearPlaybackQualityRuntimeCaps(provider) {
+  if (!playbackQualityRuntimeCaps) return false;
+  provider = provider ? normalizePlaybackProvider(provider) : '';
+  var changed = false;
+  Object.keys(playbackQualityRuntimeCaps).forEach(function (key) {
+    if (!provider || (playbackQualityRuntimeCaps[key] && playbackQualityRuntimeCaps[key].provider === provider)) {
+      delete playbackQualityRuntimeCaps[key];
+      changed = true;
+    }
+  });
+  if (changed) updatePlaybackQualityUi();
+  return changed;
+}
 function effectivePlaybackQualityForSong(song, provider, requested) {
   provider = normalizePlaybackProvider(provider || songProviderKey(song));
   var q = normalizePlaybackQualityForProvider(requested || getProviderPlaybackQuality(provider), provider);
   var cap = playbackQualityCapValue(song, provider);
-  return playbackQualityAboveCap(q, provider, cap) ? cap : q;
+  return playbackQualityCapBlocksTier(song, provider, q) ? cap : q;
 }
-function markPlaybackQualityRuntimeCap(song, provider, ceiling, reason) {
+function markPlaybackQualityRuntimeCap(song, provider, ceiling, reason, requested) {
   provider = normalizePlaybackProvider(provider || songProviderKey(song));
   if (!song || !ceiling) return false;
   ceiling = normalizePlaybackQualityForProvider(ceiling, provider);
+  requested = requested ? normalizePlaybackQualityForProvider(requested, provider) : ceiling;
   var key = playbackQualityTrackKey(song, provider);
   if (!key) return false;
   var prev = playbackQualityRuntimeCaps && playbackQualityRuntimeCaps[key];
-  if (prev && playbackQualityRank(prev.ceiling, provider) <= playbackQualityRank(ceiling, provider)) return false;
+  var mergedCeiling = ceiling;
+  var mergedRequested = requested;
+  if (prev) {
+    // 取并集: 上限取更低者, 已探测到的最高档位取更高者。
+    if (playbackQualityRank(prev.ceiling, provider) <= playbackQualityRank(ceiling, provider)) mergedCeiling = prev.ceiling;
+    var prevRequested = prev.requested || prev.ceiling;
+    if (playbackQualityRank(prevRequested, provider) >= playbackQualityRank(requested, provider)) mergedRequested = prevRequested;
+    if (mergedCeiling === prev.ceiling && mergedRequested === prevRequested) return false;
+  }
   playbackQualityRuntimeCaps[key] = {
     provider: provider,
-    ceiling: ceiling,
+    ceiling: mergedCeiling,
+    requested: mergedRequested,
     reason: reason || '',
     at: Date.now()
   };
@@ -250,6 +290,8 @@ function updatePlaybackQualityUi() {
   var currentSong = Array.isArray(playQueue) && currentIdx >= 0 && currentIdx < playQueue.length ? playQueue[currentIdx] : null;
   var currentQuality = getProviderPlaybackQuality(provider);
   var runtimeCapQuality = playbackQualityCapValue(currentSong, provider);
+  // ceiling 只是被证伪区间的下界; 真正「当前最高可播」要取未被锁的最高档。
+  if (runtimeCapQuality) runtimeCapQuality = playbackQualityHighestAllowedTier(currentSong, provider) || runtimeCapQuality;
   var effectiveQuality = effectivePlaybackQualityForSong(currentSong, provider, currentQuality);
   playbackQuality = currentQuality;
   var label = document.getElementById('quality-btn-label');
@@ -258,20 +300,20 @@ function updatePlaybackQualityUi() {
   var canUseSvip = provider === 'netease' && hasProviderSvip('netease', loginStatus);
   var displayQuality = provider === 'netease' && effectiveQuality === 'jymaster' && !canUseSvip ? 'hires' : effectiveQuality;
   if (label) label.textContent = playbackQualityShortLabel(displayQuality, provider);
-  var qualityProviderTitle = provider === 'spotify' ? 'Spotify 匹配源: ' : (provider === 'qishui' ? '汽水音质: ' : (provider === 'qq' ? 'QQ 音质: ' : (provider === 'kugou' ? '酷狗音质: ' : '网易云音质: ')));
+  var qualityProviderTitle = provider === 'spotify' ? 'Spotify 匹配源: ' : (provider === 'qishui' ? '汽水音质: ' : (provider === 'qq' ? 'QQ 音质: ' : (provider === 'kugou' ? '酷狗音质: ' : (provider === 'kw' ? '酷我音质: ' : '网易云音质: '))));
   if (btn) btn.title = qualityProviderTitle + playbackQualityLabel(displayQuality, provider) +
     (provider === 'netease' && currentQuality === 'jymaster' && !canUseSvip ? ' · 超清母带需网易云 SVIP' : '');
   if (btn && runtimeCapQuality) btn.title += ' | 当前歌曲最高: ' + playbackQualityLabel(runtimeCapQuality, provider);
   if (list) {
     list.innerHTML = playbackQualityOptions(provider).map(function (item) {
-      var capLocked = playbackQualityAboveCap(item.key, provider, runtimeCapQuality);
+      var capLocked = playbackQualityCapBlocksTier(currentSong, provider, item.key);
       var locked = !!(item.svip && !canUseSvip) || capLocked;
       return '<button class="quality-option' + (item.svip ? ' svip-only' : '') + (capLocked ? ' cap-locked' : '') + (locked ? ' locked' : '') + '" data-quality="' + item.key + '" data-svip="' + (item.svip ? '1' : '0') + '" ' + (locked ? 'disabled ' : '') + 'onclick="setPlaybackQuality(\'' + item.key + '\')"><span>' + escHtml(item.title) + '</span><small>' + escHtml(capLocked ? ('当前最高 ' + playbackQualityLabel(runtimeCapQuality, provider)) : item.sub) + '</small></button>';
     }).join('');
   }
   document.querySelectorAll('.quality-option').forEach(function (option) {
     var q = normalizePlaybackQualityForProvider(option.dataset.quality, provider);
-    var capLocked = playbackQualityAboveCap(q, provider, runtimeCapQuality);
+    var capLocked = playbackQualityCapBlocksTier(currentSong, provider, q);
     var locked = (option.dataset.svip === '1' && !canUseSvip) || capLocked;
     option.classList.toggle('active', q === displayQuality);
     option.classList.toggle('locked', locked);
@@ -290,9 +332,8 @@ function setPlaybackQuality(value) {
   var provider = currentPlaybackQualityProvider();
   var currentSong = Array.isArray(playQueue) && currentIdx >= 0 && currentIdx < playQueue.length ? playQueue[currentIdx] : null;
   var next = normalizePlaybackQualityForProvider(value, provider);
-  var cap = playbackQualityCapValue(currentSong, provider);
-  if (playbackQualityAboveCap(next, provider, cap)) {
-    showSourceFallbackNotice('音质已锁定上限', '当前歌曲最高可播 ' + playbackQualityLabel(cap, provider) + '，更高档位已禁用。');
+  if (playbackQualityCapBlocksTier(currentSong, provider, next)) {
+    showSourceFallbackNotice('音质已锁定上限', '当前歌曲不支持 ' + playbackQualityLabel(next, provider) + '，该档位已禁用。');
     updatePlaybackQualityUi();
     return;
   }
@@ -312,7 +353,7 @@ function canReloadCurrentTrackForQuality() {
   if (!audio || !audio.src || audio.paused || audio.ended) return false;
   var song = playQueue[currentIdx];
   if (!song || song.type === 'local' || song.source === 'local') return false;
-  return songProviderKey(song) === 'netease' || songProviderKey(song) === 'qq' || songProviderKey(song) === 'kugou';
+  return songProviderKey(song) === 'netease' || songProviderKey(song) === 'qq' || songProviderKey(song) === 'kugou' || songProviderKey(song) === 'kw';
 }
 function applyPlaybackQualityToCurrentTrack(nextQuality, provider) {
   var song = currentIdx >= 0 && currentIdx < playQueue.length ? playQueue[currentIdx] : null;
